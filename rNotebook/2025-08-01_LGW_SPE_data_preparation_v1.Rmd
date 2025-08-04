@@ -269,7 +269,8 @@ functionList <- bind_cols(
   msDataMethod %>% filter(grepl("FUNCTION", V1)) %>% unite(mrmFunction, V1, V2) %>% select(idx, mrmFunction),
   tibble(
     #experiment = msDataMethod %>% filter(grepl("(?i)CompoundName_1", V1)) %>% paste0(.$V1) %>% gsub(".*,", " ", .),
-    metabolite = msDataMethod %>% filter(grepl("(?i)CompoundName_1", V1)) %>% 
+    metabolite = msDataMethod %>% filter(grepl("(?i)CompoundName_1", V1)) %>%  
+      mutate(V2 = gsub(",", "-", V2)) %>%
       mutate(V1 = gsub(".*,", "_ _,", V1)) %>%
       paste0("_1_", .$V1, "_2_", .$V2, "_3_") %>%
       sub(".*,", "", .) %>%
