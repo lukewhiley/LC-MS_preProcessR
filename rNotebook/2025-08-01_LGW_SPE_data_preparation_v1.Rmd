@@ -253,7 +253,7 @@ methodPath <- listMethods[grepl(paste0("_",master_list$project_details$wash,"_")
 
 #read in delim ms method data from a waters .exp file
 msDataMethod <- read.table(
-  file = methodPath,
+  file = file.choose(),
   header = FALSE, 
   sep = " ", 
   col.names = paste0("V",seq_len(20)), 
@@ -262,7 +262,7 @@ msDataMethod <- read.table(
   add_column(
     idx = c(1:nrow(.)),
     .before = 1
-    )
+  )
 
 #extract function list
 functionList <- bind_cols(
@@ -279,13 +279,16 @@ functionList <- bind_cols(
     polarity = msDataMethod %>% filter(grepl("(?i)FunctionPolarity", V1)) %>% .$V1 %>% gsub(".*,", "", .),
     mrm1_q1 = msDataMethod %>% filter(grepl("(?i)SIRMass1", V1)) %>% .$V1 %>% gsub(".*,", "", .) %>% as.numeric(),
     mrm1_q3 = msDataMethod %>% filter(grepl("(?i)SIRMass_2_1", V1)) %>% .$V1 %>% gsub(".*,", "", .) %>% as.numeric(),
+    mrm1_ce = msDataMethod %>% filter(grepl("(?i)collisionenergy\\(V\\)_1", V1)) %>% .$V1 %>% gsub(".*,", "", .) %>% as.numeric(),
     mrm2_q1 = NA,
     mrm2_q3 = NA,
+    mrm2_ce = NA,
     mrm3_q1 = NA,
-    mrm3_q3 = NA
-    )
+    mrm3_q3 = NA,
+    mrm3_ce = NA
+  )
 ) %>% 
-# create experiment channel
+  # create experiment channel
   add_column(
     .before = "metabolite",
     experiment = sub("_2_.*", "", .$metabolite)
@@ -295,9 +298,30 @@ functionList <- bind_cols(
   mutate(experiment = sub("_3_.*", "", experiment)) %>%
   mutate(experiment = sub(".*-QC", "QC", experiment)) %>%
   mutate(metabolite = sub("-QC", "", metabolite)) %>%
-  mutate(experiment = sub("_EXP", "", experiment))
+  mutate(experiment = sub("_EXP", "", experiment)) %>%
+  mutate(experiment = sub("\\(.*", "", experiment)) %>%
+  mutate(experiment = sub("Pphen", "PPHEN", experiment)) %>%
+  mutate(experiment = sub("PPh", "PPHEN", experiment)) %>%
+  mutate(experiment = sub("Pphen", "PPHEN", experiment))
+  
 
-#tidy up method file
+#create indole experiment
+functionList$experiment[which(functionList$metabolite == "IBA")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "ICA")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "ICARB")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "I3AA")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "I3AA-SIL_d4")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "IAAEE")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "IAAME")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "IACA")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "IACR")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "ILA")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "IET")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "5-HIAA")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "5-HIAA-SIL_d5")] <- "INDOLE"
+
+
+#tidy up method file by adding blank space as experiment where extraction of info has an error
 for(idx_metabolite in functionList$metabolite){
   functionList[["experiment"]][which(functionList[["experiment"]]==idx_metabolite)] <- ""
 }
@@ -306,13 +330,15 @@ for(idx_metabolite in functionList$metabolite){
 for(idx_sil in functionList$metabolite[grepl("-SIL", functionList$metabolite)]){
   experiment <- functionList[["experiment"]][which(functionList[["metabolite"]]==gsub("-SIL.*","",idx_sil))]
   if(length(experiment) ==1){
-  functionList[["experiment"]][which(functionList[["metabolite"]]==idx_sil)] <- experiment
+    functionList[["experiment"]][which(functionList[["metabolite"]]==idx_sil)] <- experiment
   }
 }
-    
 
-#add Q2 and Q3 (missmatch so can't do simple string extract)
+
+#add Q2 and Q3 (missmatch in length so can't do simple string extract)
+idxStart = functionList$idx[1]
 for(idxStart in functionList$idx){
+  
   #find end index of function data
   idxEnd <- functionList$idx[which(functionList$idx == idxStart)+1]
   
@@ -323,14 +349,18 @@ for(idxStart in functionList$idx){
   #extract mrm2/mrm3 data
   mrm2_q1 <- msDataLoop %>% filter(grepl("(?i)SIRMass2", V1)) %>% .$V1 %>% gsub(".*,", "", .) %>% as.numeric()
   mrm2_q3 <- msDataLoop %>% filter(grepl("(?i)SIRMass_2_2", V1)) %>% .$V1 %>% gsub(".*,", "", .) %>% as.numeric()
+  mrm2_ce <- msDataLoop %>% filter(grepl("(?i)collisionenergy\\(V\\)_2", V1)) %>% .$V1 %>% gsub(".*,", "", .) %>% as.numeric()
   mrm3_q1 <- msDataLoop %>% filter(grepl("(?i)SIRMass3", V1)) %>% .$V1 %>% gsub(".*,", "", .) %>% as.numeric()
   mrm3_q3 <- msDataLoop %>% filter(grepl("(?i)SIRMass_2_3", V1)) %>% .$V1 %>% gsub(".*,", "", .) %>% as.numeric()
-
+  mrm3_ce <- msDataLoop %>% filter(grepl("(?i)collisionenergy\\(V\\)_3", V1)) %>% .$V1 %>% gsub(".*,", "", .) %>% as.numeric()
+  
   #fill columns
   if(length(mrm2_q1)==1){functionList$mrm2_q1[which(functionList$idx == idxStart)] <- mrm2_q1}
   if(length(mrm2_q3)==1){functionList$mrm2_q3[which(functionList$idx == idxStart)] <- mrm2_q3}
+  if(length(mrm2_ce)==1){functionList$mrm2_ce[which(functionList$idx == idxStart)] <- mrm2_ce}
   if(length(mrm3_q1)==1){functionList$mrm3_q1[which(functionList$idx == idxStart)] <- mrm3_q1}
   if(length(mrm3_q3)==1){functionList$mrm3_q3[which(functionList$idx == idxStart)] <- mrm3_q3}
+  if(length(mrm3_ce)==1){functionList$mrm3_ce[which(functionList$idx == idxStart)] <- mrm3_ce}
 }
 
 ```
