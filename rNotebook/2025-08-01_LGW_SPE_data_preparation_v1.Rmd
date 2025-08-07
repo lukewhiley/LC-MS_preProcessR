@@ -916,7 +916,7 @@ svDialogs::dlg_message(paste0("for efficiency, only consider gross changes where
 ## read in edited template
 
 
-#svDialogs::dlg_message(paste0("rename the file to contain `_z_peakReviewTemplateEdited.csv` in file name"))
+svDialogs::dlg_message(paste0("rename the file to contain `_z_peakReviewTemplateEdited.csv` in file name"))
 
 updateFile <- list.files(path = paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/peakReview/"), 
                          pattern = "_z_peakReviewTemplateEdited", full.names = TRUE
@@ -933,7 +933,7 @@ if(length(updateFile == 1)){
 
 
 #replace NA with "NA" for nicotinic acid
-updateFile$metabolite[is.na(updateFile$metabolite)] <- "NA"
+#updateFile$metabolite[is.na(updateFile$metabolite)] <- "NA"
 
 for(idx_metabolite in names(master_list$data$peakRegionFinal)){
   for(idx_plate in master_list$data$peakRegionFinal[[idx_metabolite]]$sample_plate){
