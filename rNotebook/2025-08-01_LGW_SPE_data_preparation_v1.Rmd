@@ -253,7 +253,7 @@ methodPath <- listMethods[grepl(paste0("_",master_list$project_details$wash,"_")
 
 #read in delim ms method data from a waters .exp file
 msDataMethod <- read.table(
-  file = file.choose(),
+  file = methodPath,
   header = FALSE, 
   sep = " ", 
   col.names = paste0("V",seq_len(20)), 
@@ -510,7 +510,10 @@ for(idx_plate in master_list$project_details$plateList){
       #create mzR header
       checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_header <- mzR::chromatogramHeader(
         checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_object) %>%
-        as_tibble()
+        as_tibble() %>% 
+        #mutate to avoid low value decimal making error in the output
+        mutate(precursorIsolationWindowTargetMZ = round(precursorIsolationWindowTargetMZ, 4),
+               productIsolationWindowTargetMZ = round(productIsolationWindowTargetMZ, 4))
       #create mzR chromatogram
       checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_chromatogram <- mzR::chromatograms(
         checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_object)
