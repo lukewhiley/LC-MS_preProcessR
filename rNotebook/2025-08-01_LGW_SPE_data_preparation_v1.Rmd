@@ -491,7 +491,7 @@ master_list$data$peakRegion <- list()
 #set object to temp store checkMzMLs
 checkMzml <- list()
 
-idx_plate = master_list$project_details$plateList[1] #for testing
+idx_plate = master_list$project_details$plateList[2] #for testing
 #for(idx_plate in master_list$project_details$plateList){
 for(idx_plate in master_list$project_details$plateList){
   
@@ -522,20 +522,49 @@ for(idx_plate in master_list$project_details$plateList){
     
     #cycle through each function to extract the chrom data
     #for testing
-    idx_function = "FUNCTION_54"
+    idx_function = "FUNCTION_129"
+    
     for(idx_function in unique(master_list$templates$msMethodLong$mrmFunction)){
-      mzmlFuncHeader <- checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_header %>%
-        filter(grepl(paste0(gsub("_","=", casefold(idx_function)), " "), chromatogramId))
       
-      #get metabolite string
+       #get metabolite string
        mrm_metabolite = master_list$templates$msMethodLong %>%
            filter(mrmFunction == idx_function) %>%
            .$metabolite %>%
            unique()
-      
        
-       #set channel index (within msFunction) for storing later
-       channel_index = 1
+       
+      #get chromatogram header data
+      mzmlFuncHeader <- checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_header %>%
+        filter(grepl(paste0(gsub("_","=", casefold(idx_function)), " "), chromatogramId))
+      
+      
+      #do a check in case the functions have been updated in the project and change between files
+      
+      if(FALSE %in% (c(
+          mzmlFuncHeader$precursorIsolationWindowTargetMZ %in% (master_list$templates$msMethodLong %>% filter(mrmFunction == idx_function) %>% .$q1 %>% unique()),
+          mzmlFuncHeader$productIsolationWindowTargetMZ %in% (master_list$templates$msMethodLong %>% filter(mrmFunction == idx_function) %>% .$q3 %>% unique())
+        ))){
+        
+        #update idx_function
+        idx_function = checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_header %>% 
+          filter(precursorIsolationWindowTargetMZ %in% (master_list$templates$msMethodLong %>% filter(mrmFunction == idx_function) %>% .$q1 %>% unique())) %>% 
+          filter(productIsolationWindowTargetMZ %in% (master_list$templates$msMethodLong %>% filter(mrmFunction == idx_function) %>% .$q3 %>% unique())) %>%
+          .$chromatogramId %>%
+          gsub(".*function=", "function=", . ) %>%
+          gsub(" .*", "", .) %>%
+          gsub("=", "_", .) %>% 
+          toupper() %>%
+          unique()
+        
+        #update header
+        mzmlFuncHeader <- checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_header %>%
+          filter(grepl(paste0(gsub("_","=", casefold(idx_function)), " "), chromatogramId))
+        
+        }
+      
+      
+     #set channel index (within msFunction) for storing later
+     channel_index = 1
        
       idx_mrm = mzmlFuncHeader$chromatogramIndex[1]#for testing
       for(idx_mrm in mzmlFuncHeader$chromatogramIndex){
@@ -756,6 +785,7 @@ if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$
   #idx_mrm = "TOL"
   i = 1
   totalMRM = length(master_list$data$peakRegionFinal %>% bind_rows() %>% arrange(metabolite) %>% .$metabolite %>% unique())
+  #for(idx_mrm in c("GCA", "GCA-SIL_d4")){ # for testing
   for(idx_mrm in (master_list$data$peakRegionFinal %>% bind_rows() %>% arrange(metabolite) %>% .$metabolite %>% unique() ) ){
   
     message(paste0("printing ", i, " of ", totalMRM, " metabolites: ", idx_mrm))
