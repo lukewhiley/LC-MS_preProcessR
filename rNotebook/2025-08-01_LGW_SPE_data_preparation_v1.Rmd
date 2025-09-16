@@ -772,10 +772,12 @@ for(idx_plate in master_list$project_details$plateList){
     #get precursor and product info from peakRegion table
   precursor_mz = master_list$data$peakRegionFinal[[idx_mrm]] %>%
     filter(sample_plate == idx_plate) %>%
-    .$precursor_mz
+    .$precursor_mz %>%
+    unique()
   product_mz = master_list$data$peakRegionFinal[[idx_mrm]] %>%
     filter(sample_plate == idx_plate) %>%
-    .$product_mz
+    .$product_mz %>%
+    unique()
   #find mrm function in the mzML file
   mzml_mrm <- master_list$data$peakRegionFinal[[idx_mrm]] %>%
     filter(sample_plate == idx_plate) %>%
@@ -783,15 +785,18 @@ for(idx_plate in master_list$project_details$plateList){
   #peakStart in check
   peakStartRT = master_list$data$peakRegionFinal[[idx_mrm]] %>%
     filter(sample_plate == idx_plate) %>%
-    .$peakStartRT %>% round(digits = 3)
+    .$peakStartRT %>% round(digits = 3) %>%
+    unique()
   #peakEnd in check
   peakEndRT = master_list$data$peakRegionFinal[[idx_mrm]] %>%
     filter(sample_plate == idx_plate) %>%
-    .$peakEndRT %>% round(digits = 3)
+    .$peakEndRT %>% round(digits = 3) %>%
+    unique()
   #peakApex in check
   peakApexRT = master_list$data$peakRegionFinal[[idx_mrm]] %>%
     filter(sample_plate == idx_plate) %>%
-    .$peakApexRT %>% round(digits = 3)
+    .$peakApexRT %>% round(digits = 3) %>%
+    unique()
 
   peakReview[[idx_plate]] <- list(
     `mzML.list` = c(
@@ -820,6 +825,16 @@ for(idx_plate in master_list$project_details$plateList){
     #create mzR header
     tempMzml$mzR_header <- mzR::chromatogramHeader(tempMzml$mzR_object)
     
+    #work around fix to fix issue where some projects have a method mismatch that mis-aligns the chromatogramIndex
+    if(length(mzml_mrm) > 1){
+      mzml_mrm = tempMzml$mzR_header %>%
+        as_tibble() %>%
+        filter(chromatogramIndex %in% mzml_mrm) %>%
+        filter(floor(precursorIsolationWindowTargetMZ) == floor(precursor_mz)) %>%
+        filter(floor(productIsolationWindowTargetMZ) == floor(product_mz)) %>%
+        .$chromatogramIndex
+    }
+
     #create mzR chromatogram
     tempMzml$mzR_chromatogram <- mzR::chromatograms(tempMzml$mzR_object)
     
