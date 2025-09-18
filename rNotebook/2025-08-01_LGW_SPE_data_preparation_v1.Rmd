@@ -1081,10 +1081,10 @@ for(idx_plate in master_list$project_details$plateList){
         )
     
 # extract peak region
-idx_mrm = "GCA-SIL_d4" # for testing loop
+#idx_mrm = "GCA-SIL_d4" # for testing loop
 #idx_mrm ="TCA-SIL_d4"
-#for(idx_mrm in names(master_list$data$peakRegionFinal)){
-  for(idx_mrm in c("GCA", "GCA-SIL_d4")){ 
+for(idx_mrm in names(master_list$data$peakRegionFinal)){
+  #for(idx_mrm in c("GCA", "GCA-SIL_d4")){ 
   #create list on first iteration of mrm
   if(!idx_mrm %in% names(master_list$data$chromatogram)){master_list$data$chromatogram[[idx_mrm]] <- list()}
   if(!idx_mrm %in% names(master_list$data$peakAreaMetabolite)){master_list$data$peakAreaMetabolite[[idx_mrm]] <- list()}
