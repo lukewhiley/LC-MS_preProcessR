@@ -1,0 +1,502 @@
+---
+title: "AD Faecal"
+author: "LGW"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: console
+---
+
+# load
+
+## load packages
+
+```{r loadLibraries, echo=FALSE, warning=FALSE, eval=TRUE, error=FALSE, message=FALSE}
+
+library(tidyverse)
+library(mva.plots)
+library(gridExtra)
+library(fusion)
+library(sva)
+
+
+```
+
+## load data
+
+```{r}
+
+dataRaw <- read_csv(
+  file = "C:\\Users\\300828F\\OneDrive - Murdoch University\\projects\\FERNANDO-AD_FAECAL\\data\\metabolite data\\NMR\\2025-09-22_AD_faecal_csv_model_base.csv"
+    ) %>%
+  rename(
+    sample.dataPath = dataPath,
+    sample.nmrFolderID = nmrFolderId,
+    sample.name = sampleName,
+    sample.fileName = runName,
+    sample.plate = plate
+  ) %>%
+  arrange(
+    sample.plate,
+    sample.nmrFolderID
+  ) %>%
+  add_column(
+    .after = "sample.plate",
+    sample.batch = "1",
+    sample.type = "sample"
+  ) %>%
+  mutate(
+    across(where(is.numeric), ~ round(.x, 3))
+    )
+
+#add batch 2
+dataRaw$sample.batch[which(dataRaw$sample.plate == "ALZp007")] <- "2"
+
+```
+
+
+## Filter failed samples
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+flaggedSamples = NULL
+
+# perform per batch
+
+for(idx_batch in dataRaw$sample.batch){
+
+#first flag samples with low signal
+
+metaboliteSignal <- tibble(
+  sampleID = dataRaw %>% filter(sample.batch == idx_batch) %>% .$sample.name,
+  summedSignal = dataRaw %>%
+    filter(sample.batch == idx_batch) %>%
+    select(!contains("sample")) %>%
+    rowSums(na.rm = TRUE)
+)
+
+
+flaggedSamples <- c(
+  flaggedSamples,
+  metaboliteSignal[["sampleID"]][which(metaboliteSignal$summedSignal < (median(metaboliteSignal$summedSignal)*0.01))]
+)
+
+}
+
+print(flaggedSamples)
+
+dataFiltered <- dataRaw %>%
+  filter(!sample.name %in% flaggedSamples)
+
+
+```
+
+## Filter Failed features (missing value)
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+flaggedFeature <- NULL
+
+
+# perform per batch
+
+idx_metabolite = names(dataFiltered %>% select(!contains("sample")))[1] #for testign loop
+for(idx_metabolite in names(dataFiltered %>% select(!contains("sample")))){
+  #calculate for sample
+  sampleMissing <- which(is.na(dataFiltered %>% filter(sample.type == "sample") %>% .[[idx_metabolite]])) %>% length()
+  samplePercent <- (100/(dataFiltered %>% filter(sample.type == "sample") %>% nrow()))*sampleMissing
+
+    if(samplePercent > 20){
+      flaggedFeature = c(flaggedFeature, idx_metabolite)
+    }
+  
+  
+}
+
+#create final dataSet
+dataFiltered <- dataFiltered %>%
+  select(!all_of(flaggedFeature))
+
+```
+
+## Impute
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+## 1.4. impute missing values [min/2 imputation (missing assumed < LOD)] -----------------------------------------------------
+#Imputation of the all zero value and missing data 
+#Imputation is completed using x/2, where x is minimum intensity of that feature in the batch
+
+#impute function
+#add LGW impute function
+lgw_impute <- function(x){
+  map(.x = x, .f = ~ (min(.x[.x > 0], na.rm = TRUE))/2) %>%
+    #use replace_na to replace NAs with min/2 value
+    replace_na(
+      data = x %>% mutate_all(~ replace(., . == 0, NA)), #note - replace zeros with NA to make compatible with replace_na()
+      replace = .) #note - replace with list of min/2 values generated from map function in pipe (.)
+}
+
+#set data list
+dataImputed <- list()
+#run loop in all plated
+for(idx_plate in unique(dataFiltered$sample.plate)){
+  #set all 0, NaN, is.infinate to a NA value for consistency
+  #create matrix 
+  imputeMatrix <- dataFiltered %>%
+    column_to_rownames("sample.name") %>%
+    select(-contains("sample")) %>%
+    as.matrix()
+  
+  #replace 0, NaN and Inf with NA for imputation (min/2)
+  imputeMatrix[imputeMatrix==0] <- NA
+  imputeMatrix[is.infinite(imputeMatrix)] <- NA
+  imputeMatrix[is.nan(imputeMatrix)] <- NA
+  
+  
+  #run lgw_impute function
+  dataImputed <- bind_rows(
+    dataImputed,
+    imputeMatrix %>% 
+      as.data.frame() %>%
+      lgw_impute() %>%
+      rownames_to_column("sample.name") %>%
+      as_tibble() %>%
+      #samples that are 100% missing (zero/na) have imputation error as min/2(x) is inf. So this step replaces inf with zeros (will be flagged for filter later anyway).
+      mutate_all(function(x) ifelse(is.infinite(x), 1, x)) %>%
+      left_join(
+        dataFiltered %>%
+          filter(sample.plate == idx_plate) %>%
+          select(contains("sample")),
+        .,
+        by = "sample.name"
+      )
+  )
+
+  }
+
+```
+
+
+## pivot long and plot boxplots
+```{r}
+
+dataImputed %>%
+  pivot_longer(
+    cols = !contains("sample"),
+    names_to = "metabolite",
+    values_to = "conc"
+  ) %>%
+  ggplot(aes(x = sample.plate, y = log(conc+1))) +
+  geom_boxplot() +
+  facet_wrap(
+    facets = "metabolite",
+    scales = "free_y"
+  ) +
+  theme_bw() +
+  ggpubr::stat_compare_means(
+    comparisons = list(
+      c("ALZp003", "ALZp004"),
+      c("ALZp003", "ALZp007"),
+      c("ALZp004", "ALZp007")
+    ),
+    method = "wilcox",
+    hide.ns = FALSE, label = "p.signif"
+  )
+
+
+pca.mod1 <- ropls::opls(
+  x = dataImputed %>% select(!contains("sample")) %>% as.matrix(), y = NULL, predI = 3, log10L = TRUE, scaleC = "pareto", fig.pdfC = 'none'
+    )
+
+
+cowplot::plot_grid(
+  nrow = 2, ncol = 2,
+  #p1 vs p2
+  cbind(
+    dataImputed %>% select(sample.name, sample.batch),
+    pca.mod1@scoreMN
+  ) %>% 
+    as_tibble() %>%
+    ggplot(
+      aes(x = p1, y = p2, fill = sample.batch) 
+    ) +
+    geom_point(
+      shape = 21,
+      size = 4
+    ) +
+    theme_bw() +
+    theme(legend.position = "none"),
+  NULL,
+  #p1 vs p3
+  cbind(
+    dataImputed %>% select(sample.name, sample.batch),
+    pca.mod1@scoreMN
+  ) %>% 
+    as_tibble() %>%
+    ggplot(
+      aes(x = p1, y = p3, fill = sample.batch) 
+    ) +
+    geom_point(
+      shape = 21,
+      size = 4
+    ) +
+    theme_bw() +
+    theme(legend.position = "none"),
+  #p2 vs p3
+  cbind(
+    dataImputed %>% select(sample.name, sample.batch),
+    pca.mod1@scoreMN
+  ) %>% 
+    as_tibble() %>%
+    ggplot(
+      aes(x = p2, y = p3, fill = sample.batch) 
+    ) +
+    geom_point(
+      shape = 21,
+      size = 4
+    ) +
+    theme_bw() +
+    theme(legend.position = "none")
+)
+  
+  
+```
+
+## combat batch correction
+
+```{r}
+
+#data prep (samples in cols and metabolites in rows)
+
+dataPreCombat <- dataImputed %>% 
+  select(sample.name, !contains("sample")) %>%
+  #offset by constant factor of 1 for lof step later
+   mutate(
+    across(where(is.numeric), ~ .x+1)
+    ) %>%
+  column_to_rownames("sample.name") %>%
+  t() %>%
+  log10()
+
+batch = dataImputed$sample.batch 
+
+#perform batch correction
+dataPostCombat <- ComBat(
+  dat = as.matrix(dataPreCombat),
+  batch = batch,
+  mod = NULL,           # or NULL
+  par.prior = TRUE,
+  prior.plots = FALSE,
+  mean.only = FALSE,          # set TRUE if you only want mean-shift correction
+  ref.batch = 1
+)
+
+# sometimes combat gives neg values, offset factor constant to remove this option
+for(idx_metaboliteRow in 1:nrow(dataPostCombat)){
+  minRow = min(dataPostCombat[idx_metaboliteRow,], na.rm = TRUE)
+  if(minRow < 0){
+    dataPostCombat[idx_metaboliteRow, ] <- dataPostCombat[idx_metaboliteRow, ] + abs(minRow*2)   
+  }
+}
+
+
+#unlog data
+dataPostCombat2 <- left_join(
+  by = "sample.name",
+  dataImputed %>% select(contains("sample")),
+  ((10^dataPostCombat) - 1) %>% # per-feature offset removal
+    round(3) %>%
+    t(.) %>%
+    as.data.frame() %>%
+    lgw_impute() %>%
+    rownames_to_column("sample.name") %>%
+    as_tibble()
+)
+
+```
+
+## qc plots
+
+```{r}
+
+dataPostCombat2 %>%
+  pivot_longer(
+    cols = !contains("sample"),
+    names_to = "metabolite",
+    values_to = "conc"
+  ) %>%
+  ggplot(aes(x = sample.plate, y = log(conc+1))) +
+  geom_boxplot() +
+  facet_wrap(
+    facets = "metabolite",
+    scales = "free_y"
+  ) +
+  theme_bw() +
+  ggpubr::stat_compare_means(
+    comparisons = list(
+      c("ALZp003", "ALZp004"),
+      c("ALZp003", "ALZp007"),
+      c("ALZp004", "ALZp007")
+    ),
+    method = "wilcox",
+    hide.ns = FALSE, label = "p.signif"
+  )
+
+
+
+#pca check
+pca.mod2 <- ropls::opls(
+  x = dataPostCombat2 %>% select(!contains("sample")) %>% as.matrix(), y = NULL, predI = 3, log10L = TRUE, scaleC = "pareto", fig.pdfC = 'none'
+    )
+
+
+cowplot::plot_grid(
+  nrow = 2, ncol = 2,
+  #p1 vs p2
+  cbind(
+    dataPostCombat2 %>% select(sample.name, sample.batch),
+    pca.mod2@scoreMN
+  ) %>% 
+    as_tibble() %>%
+    ggplot(
+      aes(x = p1, y = p2, fill = sample.batch) 
+    ) +
+    geom_point(
+      shape = 21,
+      size = 4
+    ) +
+    theme_bw() +
+    theme(legend.position = "none"),
+  NULL,
+  #p1 vs p3
+  cbind(
+    dataPostCombat2 %>% select(sample.name, sample.batch),
+    pca.mod2@scoreMN
+  ) %>% 
+    as_tibble() %>%
+    ggplot(
+      aes(x = p1, y = p3, fill = sample.batch) 
+    ) +
+    geom_point(
+      shape = 21,
+      size = 4
+    ) +
+    theme_bw() +
+    theme(legend.position = "none"),
+  #p2 vs p3
+  cbind(
+    dataPostCombat2 %>% select(sample.name, sample.batch),
+    pca.mod2@scoreMN
+  ) %>% 
+    as_tibble() %>%
+    ggplot(
+      aes(x = p2, y = p3, fill = sample.batch) 
+    ) +
+    geom_point(
+      shape = 21,
+      size = 4
+    ) +
+    theme_bw() +
+    theme(legend.position = "none")
+)
+  
+
+
+
+
+
+```
+
+
+## calculate median dilution factor
+
+```{r}
+
+dilutionTibble = list()
+
+for(idx_metabolite in names(dataImputed %>% select(!contains("sample")))){
+  
+  dilutionTibble <- bind_rows(
+    dilutionTibble,
+    tibble(
+      metabolite = idx_metabolite,
+      medianB1 = dataImputed %>% filter(sample.batch == "1") %>% .[[idx_metabolite]] %>% median(na.rm = TRUE), 
+      medianB2 = dataImputed %>% filter(sample.batch == "2") %>% .[[idx_metabolite]] %>% median(na.rm = TRUE), 
+      dilutionFactor = medianB1/medianB2
+    )
+  )  
+
+}
+
+dilutionTibble
+
+
+#postCombat
+dilutionTibble2 = list()
+
+for(idx_metabolite in names(dataImputed %>% select(!contains("sample")))){
+  
+  dilutionTibble2 <- bind_rows(
+    dilutionTibble2,
+    tibble(
+      metabolite = idx_metabolite,
+      medianB1 = dataPostCombat2 %>% filter(sample.batch == "1") %>% .[[idx_metabolite]] %>% median(na.rm = TRUE), 
+      medianB2 = dataPostCombat2 %>% filter(sample.batch == "2") %>% .[[idx_metabolite]] %>% median(na.rm = TRUE), 
+      dilutionFactor = medianB1/medianB2
+    )
+  )  
+
+}
+
+dilutionTibble2
+
+
+```
+
+## corr check
+
+check the corr between metabolites for each batch to check combat is consistent
+
+```{r}
+
+corOut <- list()
+
+  for(idx_metabolite in dataImputed %>% select(!contains("sample")) %>% names()){
+    
+    b1pre <- dataImputed %>% filter(sample.batch == "1") %>% .[[idx_metabolite]]
+    b1post <- dataPostCombat2 %>% filter(sample.batch == "1") %>% .[[idx_metabolite]]
+    
+    b2pre <- dataImputed %>% filter(sample.batch == "2") %>% .[[idx_metabolite]]
+    b2post <- dataPostCombat2 %>% filter(sample.batch == "2") %>% .[[idx_metabolite]]
+    
+    corOut <- bind_rows(
+      corOut,
+      tibble(
+        metabolite = idx_metabolite,
+        corB1 = cor(b1pre, b1post, method = "pearson"),
+        corB2 = cor(b2pre, b2post, method = "pearson")
+      )
+    )
+    
+}
+
+corOut
+
+```
+
+
+## export data
+
+```{r}
+
+write_csv(
+  dataPostCombat2 %>% as.data.frame(),
+   file = "C:\\Users\\300828F\\OneDrive - Murdoch University\\projects\\FERNANDO-AD_FAECAL\\data\\metabolite data\\NMR\\2025-09-22_AD_faecal_LGW_preProcessed2.csv"
+  )
+
+
+
+```
+
