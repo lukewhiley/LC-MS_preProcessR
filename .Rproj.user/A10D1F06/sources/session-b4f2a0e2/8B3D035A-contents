@@ -1488,8 +1488,9 @@ master_list$data$peakArea$wideFiltered <- master_list$data$peakArea$wide %>%
 
 flaggedFeature <- NULL
 
-idx_metabolite = names(master_list$data$peakArea$wideFiltered %>% select(!contains("sample")))[1] #for testign loop
-for(idx_metabolite in names(master_list$data$peakArea$wideFiltered %>% select(!contains("sample")))){
+idx_metabolite <- "8-OH-2-dG"
+#idx_metabolite = names(master_list$data$peakArea$wide %>% select(!contains("sample")))[1] #for testign loop
+for(idx_metabolite in names(master_list$data$peakArea$wide %>% select(!contains("sample")))){
   #calculate for sample
   sampleMissing <- which(is.na(master_list$data$peakArea$wideFiltered %>% filter(sampleType == "sample") %>% .[[idx_metabolite]])) %>% length()
   samplePercent <- (100/(master_list$data$peakArea$wideFiltered %>% filter(sampleType == "sample") %>% nrow()))*sampleMissing
@@ -1500,14 +1501,16 @@ for(idx_metabolite in names(master_list$data$peakArea$wideFiltered %>% select(!c
   ltrMissing <- which(is.na(master_list$data$peakArea$wideFiltered %>% filter(sampleType == "ltr") %>% .[[idx_metabolite]])) %>% length()
   ltrPercent <- (100/(master_list$data$peakArea$wideFiltered %>% filter(sampleType == "ltr") %>% nrow()))*ltrMissing
   
+  #if is a non-SIL standard
   if(!grepl("SIL", idx_metabolite)){
-    if(samplePercent > 15.5 | pqcPercent > 15.5){ #} | ltrPercent >20){
+    if(samplePercent > 75.5 | pqcPercent > 25.5){ #} | ltrPercent >20){
       flaggedFeature = c(flaggedFeature, idx_metabolite)
     }
   }
   
+  #if it is a SIL standard
   if(grepl("SIL", idx_metabolite)){
-    if(samplePercent > 50.5 | pqcPercent > 25.5){ # | ltrPercent >25){
+    if(samplePercent > 15.5 | pqcPercent > 15.5){ # | ltrPercent >25){
       flaggedFeature = c(flaggedFeature, idx_metabolite)
     }
   }
@@ -2084,6 +2087,44 @@ for(idx_metabolite in (master_list$data$response$impute %>% bind_rows() %>% sele
     mutate(sample_plate = sub("a", "", sample_plate)) %>%
     mutate(sample_plate = sub("b", "", sample_plate)) 
   
+  #add max/min dummy data to normalise axis on facet_wrap
+  for(idx_dataType in unique(violinData$dataType)){
+  #work around to normalise axis on per plate plot
+  maxValue <- violinData %>%
+    filter(dataType == idx_dataType) %>%
+    .$value %>%
+    max()
+  minValue <- violinData %>%
+    filter(dataType == idx_dataType) %>%
+    .$value %>%
+    min()
+  
+  #make dunny data per plate
+  dummyData = list()
+  for(idx_plate in unique(violinData$sample_plate)){
+  dummyData <- dummyData %>%
+    bind_rows(.,
+              bind_rows(  
+                (violinData %>%
+                   filter(dataType == idx_dataType) %>%
+                   filter(value == maxValue))[1,],
+                (violinData %>%
+                   filter(dataType == idx_dataType) %>%
+                   filter(value == minValue))[1,]
+              ) %>% mutate(
+                sample_plate = idx_plate,
+                sample_run_index = NA) 
+    )      
+    
+  }
+  
+  violinData <- violinData %>%
+    bind_rows(.,
+              dummyData)
+  }
+  
+  #make violin plot
+  
   violinPlot <-  ggplot(data = violinData, aes(x = sample_type, y = value, fill = sample_type)) +
     theme_bw() +
     geom_violin(linewidth=0.75, trim = TRUE, alpha=0.4, scale = "width", position = position_dodge(width = .75), color = NA) +
@@ -2091,10 +2132,13 @@ for(idx_metabolite in (master_list$data$response$impute %>% bind_rows() %>% sele
     ggbeeswarm::geom_quasirandom(shape = 21, size=2, dodge.width = .75, color="black",alpha=0.4,show.legend = F) + 
     facet_wrap(facets = c("facet"), ncol=1, scales="free_y") +
     scale_fill_manual(values = c("sample" = "grey", "pqc" = "orchid", "ltr" = "seagreen3")) +
-    geom_hline(data= pqc_data %>% filter(grepl("response", dataType)), aes(yintercept=median_val), colour = "orchid4", linetype ="longdash", linewidth = 1) +
+    geom_hline(data= pqc_data, #%>% filter(grepl("response", dataType)), 
+               aes(yintercept=median_val), colour = "orchid4", linetype ="longdash", linewidth = 1) + #
     ggtitle("all plates") +
     theme(legend.position = "none")
   
+ 
+  #make a plot per plate
   violinPlotplate <- ggplot(data = violinData, aes(x = sample_type, y = value, fill = sample_type)) +
     theme_bw() +
     geom_violin(linewidth=0.75, trim = TRUE, alpha=0.4, scale = "width", position = position_dodge(width = .75), color = NA) +
@@ -2102,7 +2146,8 @@ for(idx_metabolite in (master_list$data$response$impute %>% bind_rows() %>% sele
     ggbeeswarm::geom_quasirandom(shape = 21,size=2, dodge.width = .75, color="black",alpha= 0.4, show.legend = F) + 
     facet_wrap(facets = c("facet", "sample_plate"), ncol = length(unique(violinData$sample_plate)), scales = "free_y") +
     scale_fill_manual(values = c("sample" = "grey", "pqc" = "orchid", "ltr" = "seagreen3")) +
-    geom_hline(data= pqc_data %>% filter(grepl("response", dataType)), aes(yintercept=median_val), colour = "orchid4", linetype ="longdash",linewidth = 1) +
+    geom_hline(data= pqc_data,# %>% filter(grepl("response", dataType)), 
+               aes(yintercept=median_val), colour = "orchid4", linetype ="longdash",linewidth = 1) +
     ggtitle("per plate")
   
   combinedPlot <- cowplot::plot_grid(
