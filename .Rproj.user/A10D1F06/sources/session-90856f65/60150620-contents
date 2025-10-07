@@ -1,0 +1,91 @@
+---
+title: "Lipid exploreR v4"
+output:
+  html_document:
+    df_print: paged
+---
+
+<!-- This notebook is designed for use with the ANPC targeted lipid method. 
+Section 1: SkylineR is designed to optimise lipidomics data processing in combination with skyline.
+
+Section 1 - SkylineR
+
+This notebook is designed to optimise lipidomics data processing in combination with skylineMS.
+
+It will perform:
+- retention time optimisation by identifying peaks in LTR or QC samples
+- standardised peak boundary fitting to all samples
+
+REQUIREMENTS:
+- The script will create the project structure.
+- A subfolder will be created: [~project_directory/data/mzml] - this must contain mzML files created by proteowizard msconvert version 3.0.19. Later versions of MS convert will not work due to problems with mzR package in r
+- mzML files from LTR samples must have "LTR" in their filename with matched case
+-->
+
+
+```{r lipid_skylineR, eval = TRUE, echo = FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+#### load packages
+package_list <- c('statTarget', 'svDialogs', 'ggpubr', 'janitor', 'plotly', 'knitr', 'viridisLite', 'mzR', 'httr', 'cowplot', 'matrixStats', 'tidyverse')
+
+for(idx_package in package_list){
+  if(length(which(row.names(installed.packages()) == idx_package)) > 0){
+  suppressMessages(require(package = idx_package,
+                                         character.only = TRUE))
+  } else {
+    dlg_message(
+    paste0(idx_package, " is not installed. Please install ", idx_package, " before continuing.")
+    )
+  }
+}
+
+skylineR_script <- GET(url = paste0("https://raw.githubusercontent.com/lukewhiley/targeted_lipid_exploreR/main/v4/scripts/SCRIPT_lipidExploreR_skylineR_v4.R")) %>% 
+  content(as = "text")
+
+eval(parse(text = skylineR_script), envir = .GlobalEnv)
+
+#clean environment
+rm(list = c(ls()[which(ls() != "master_list")]))
+
+```
+
+
+
+<!-- 
+Section 2 - qc checkeR
+
+IMPORTANT INFORMATION PRIOR TO USING: 
+-> RUN skylineR chunk above BEFORE this qc script. 
+-> This chunk can be run using existing rda files created by skylineR
+-> NOTE: The type of QC used MUST be tagged in the filename with matched case (LTR not ltr)
+ 
+-->
+
+
+```{r lipidQC_exploreR, eval = TRUE, echo = FALSE, warning=FALSE, error=FALSE, message=FALSE}
+#### load packages
+package_list <- c('statTarget', 'svDialogs', 'ggpubr', 'janitor', 'plotly', 'knitr', 'viridisLite', 'mzR', 'httr', 'cowplot', 'matrixStats', 'tidyverse')
+
+for(idx_package in package_list){
+  if(length(which(row.names(installed.packages()) == idx_package)) > 0){
+  suppressMessages(require(package = idx_package,
+                                         character.only = TRUE))
+  } else {
+    dlg_message(
+    paste0(idx_package, " is not installed. Please install ", idx_package, " before continuing.")
+    )
+  }
+}
+
+qcCheckR_script <- GET(url = paste0("https://raw.githubusercontent.com/lukewhiley/targeted_lipid_exploreR/main/v4/scripts/SCRIPT_lipidExploreR_qcCheckeR_v4.R")) %>% 
+  content(as = "text")
+
+eval(parse(text = qcCheckR_script), envir = .GlobalEnv)
+
+#clean environment
+rm(list = c(ls()[which(ls() != "master_list")]))
+
+```
+
+
+

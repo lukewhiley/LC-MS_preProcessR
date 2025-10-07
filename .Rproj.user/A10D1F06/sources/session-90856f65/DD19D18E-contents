@@ -1,0 +1,38 @@
+library(ggplot2)
+library(gghalves)  # For split violin functionality
+library(ggbeeswarm)
+
+# Assuming violinData has columns: sample_type, value, facet
+# And you want to split by whether sample_type is "sample" or "sampleCor"
+
+
+  
+  
+  
+
+  
+  # Beeswarm points
+  ggbeeswarm::geom_quasirandom(
+    aes(shape = sample_type, color = sample_type),
+    size = 2, dodge.width = .75, alpha = 0.4, show.legend = FALSE
+  ) +
+  
+  facet_wrap(~facet, ncol = 1, scales = "free_y") +
+  
+  scale_fill_manual(values = c("sample" = NA, "sampleCor" = "grey", 
+                               "pqc" = NA, "pqcCor" = "orchid", 
+                               "ltr" = NA, "ltrCor" = "seagreen3")) +
+  scale_color_manual(values = c("sample" = "grey", "sampleCor" = "grey", 
+                                "pqc" = "orchid", "pqcCor" = "black", 
+                                "ltr" = "seagreen3", "ltrCor" = "black")) +
+  scale_shape_manual(values = c("sample" = 0, "sampleCor" = 23, 
+                                "pqc" = 22, "pqcCor" = 23, 
+                                "ltr" = 22, "ltrCor" = 23)) +
+  
+  geom_hline(data = loopMedian, aes(yintercept = median_val), 
+             colour = "orchid4", linetype = "dotted", linewidth = 1) +
+  geom_hline(data = loopMedianCor, aes(yintercept = median_val), 
+             colour = "orchid4", linetype = "solid", linewidth = .8) +
+  
+  ggtitle("all plates") +
+  theme(legend.position = "none")
