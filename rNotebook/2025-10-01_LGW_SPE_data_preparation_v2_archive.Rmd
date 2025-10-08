@@ -3007,14 +3007,15 @@ plot.PCA <- ggplot(data = plotData, aes(x=p1, y=p2, fill = sample_type, shape = 
     )
     );plot.PCA
 
-plot.PCA.Plate <- ggplot(data = plotData, aes(x=p1, y=p2, fill = sample_plate, shape = sample_type, color = sample_plate)) +
-  geom_point(data = plotData %>% filter(sample_type == "sample"), size = 1.5) +
+plot.PCA.Plate <- ggplot(data = plotData, aes(x=p1, y=p2, shape = sample_type, color = sample_type, fill = sample_plate)) +
+  geom_point(data = plotData %>% filter(sample_type == "sample"), size = 2) +
   geom_point(data = plotData %>% filter(sample_type == "ltr"), size = 2.5) +
   geom_point(data = plotData %>% filter(sample_type == "pqc"), size = 2.5) +
-  #scale_shape_manual(values = c("sample" = 21, "pqc" = 23, "ltr" = 21)) +
-  #scale_color_manual(values = c("sample" = "black", "pqc" = "black", "ltr" = "black")) +
-  #scale_fill_manual(values = c("sample" = "white", "pqc" = "orchid", "ltr" = "seagreen3")) +
+  scale_shape_manual(values = c("sample" = 22, "pqc" = 24, "ltr" = 25)) +
+  scale_color_manual(values = c("sample" = "grey", "pqc" = "black", "ltr" = "black")) +
+  #scale_fill_manual(values = c("RARp003" = "white", "RARp004" = "orchid", "RARp005" = "seagreen3")) +
   theme_bw() +
+  guides(fill = guide_legend(override.aes = list(shape=21))) +
   ggtitle(
     paste0(
       "PCA on batch corrected response data;\n(samples = ", 
@@ -3027,7 +3028,7 @@ plot.PCA.Plate <- ggplot(data = plotData, aes(x=p1, y=p2, fill = sample_plate, s
       ncol(X),
       ")"
     )
-    );plot.PCA.Plate
+  );plot.PCA.Plate
 
 
 
