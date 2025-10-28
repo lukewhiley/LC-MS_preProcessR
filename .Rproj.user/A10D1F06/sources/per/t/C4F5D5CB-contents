@@ -95,6 +95,15 @@ master_list$project_details$project_name <-  svDialogs::dlg_input("project name:
 svDialogs::dlg_message(paste0("set up mzml folder in project directory as follows:  " , gsub(".*/", "~/", master_list$project_details$project_dir), "/", master_list$project_details$wash, "/data/mzml")); 
 svDialogs::dlg_message("copy all mzmls into this folder, do not sort into subfolders");
 svDialogs::dlg_message("NOTE THIS SCRIPT WILL NOT WORK ON WINDOWS IF PATH LENGTH IS >260 CHARACTERS")
+pathLength = nchar(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/mzml"))
+svDialogs::dlg_message(paste0("Your path length is: ", pathLength))
+if(pathLength >= 255){
+  svDialogs::dlg_message(paste0("Your path length is approaching the Windows maximum of 260. If you are on Windows it may fail."))
+}
+
+if(pathLength < 255){
+  svDialogs::dlg_message(paste0("Your path length looks OK and is shorter than the Windows maximum of 260."))
+}
 
  
 #set filePath
@@ -109,9 +118,9 @@ svDialogs::dlg_message(paste0("there are ", length(fileList), " mzml files"))
 if(length(fileList) > 0){
   
 #sort files into plate subfolders
-plateList <- gsub(".*p0", "p0", fileList) %>% gsub("_.*", "", .) %>% unique()
+plateList <-  fileList %>% gsub(".*SS", "SS", .) %>% gsub(".*p0", "p0", .) %>% gsub("_.*", "", .) %>% unique()
 
-idxPlate = plateList[1]
+idxPlate = plateList[2]
 for(idxPlate in plateList){
   plateMZML <- fileList[grepl(idxPlate, fileList)]
 
@@ -273,13 +282,15 @@ msDataMethod <- read.table(
 functionList <- bind_cols(
   msDataMethod %>% filter(grepl("FUNCTION", V1)) %>% unite(mrmFunction, V1, V2) %>% select(idx, mrmFunction),
   tibble(
-    #experiment = msDataMethod %>% filter(grepl("(?i)CompoundName_1", V1)) %>% paste0(.$V1) %>% gsub(".*,", " ", .),
-    metabolite = msDataMethod %>% filter(grepl("(?i)CompoundName_1", V1)) %>%  
-      mutate(V2 = gsub(",", "-", V2)) %>%
-      mutate(V1 = gsub(".*,", "_ _,", V1)) %>%
-      paste0("_1_", .$V1, "_2_", .$V2, "_3_") %>%
-      sub(".*,", "", .) %>%
-      sub("_2__3_", "", .),
+    method = msDataMethod %>% filter(grepl("(?i)CompoundName_1", V1)) %>% .$V1 %>% gsub(".*\\,", "", .),
+    experiment = msDataMethod %>% filter(grepl("(?i)CompoundName_1", V1)) %>% .$V2, #%>% gsub(".*,", " ", .),
+    metabolite = msDataMethod %>% filter(grepl("(?i)CompoundName_1", V1)) %>% .$V3 %>% gsub("\\..*", "", .),
+    #metabolite = msDataMethod %>% filter(grepl("(?i)CompoundName_1", V1)) %>%  
+    #   mutate(V2 = gsub(",", "-", V2)) %>%
+    #   mutate(V1 = gsub(".*,", "_ _,", V1)) %>%
+    #   paste0("_1_", .$V1, "_2_", .$V2, "_3_") %>%
+    #   sub(".*,", "", .) %>%
+    #   sub("_2__3_", "", .),
     rtStart = msDataMethod %>% filter(grepl("(?i)FunctionStartTime", V1)) %>% .$V1 %>% gsub(".*,", "", .),
     rtEnd = msDataMethod %>% filter(grepl("(?i)FunctionEndTime", V1)) %>% .$V1 %>% gsub(".*,", "", .),
     polarity = msDataMethod %>% filter(grepl("(?i)FunctionPolarity", V1)) %>% .$V1 %>% gsub(".*,", "", .),
@@ -295,10 +306,10 @@ functionList <- bind_cols(
   )
 ) %>% 
   # create experiment channel
-  add_column(
-    .before = "metabolite",
-    experiment = sub("_2_.*", "", .$metabolite)
-  ) %>%
+  #add_column(
+   # .before = "metabolite",
+  #  experiment = sub("_2_.*", "", .$metabolite)
+  #) %>%
   mutate(metabolite = sub(".*_2_", "", metabolite)) %>%
   mutate(metabolite = sub("_3_.*", "", metabolite)) %>%
   mutate(experiment = sub("_3_.*", "", experiment)) %>%
@@ -368,6 +379,27 @@ for(idxStart in functionList$idx){
   if(length(mrm3_q3)==1){functionList$mrm3_q3[which(functionList$idx == idxStart)] <- mrm3_q3}
   if(length(mrm3_ce)==1){functionList$mrm3_ce[which(functionList$idx == idxStart)] <- mrm3_ce}
 }
+
+
+#trim method if running control charts to only matched SILs
+
+functionListMethod <- "CCC/fullAnalysis"
+
+while(functionListMethod != "CCC" & functionListMethod != "fullAnalysis"){
+functionListMethod <- svDialogs::dlg_input(message = paste0("are you running a controlChartCheck or a full project analysis?"), default = paste0("CCC/fullAnalysis"))$res
+}
+
+if(functionListMethod == "CCC"){
+  
+  methodSil <- functionList$metabolite[grepl("-SIL", functionList$metabolite)]
+  matchedSil <- methodSil %>% gsub("-SIL.*", "", .)
+  matchedSil <- functionList$metabolite[functionList$metabolite %in% matchedSil]
+  
+functionList <- functionList %>%
+  filter(metabolite %in% c(methodSil, matchedSil))
+
+}
+
 
 ```
 
@@ -496,7 +528,7 @@ master_list$data$peakRegion <- list()
 #set object to temp store checkMzMLs
 checkMzml <- list()
 
-idx_plate = master_list$project_details$plateList[2] #for testing
+idx_plate = master_list$project_details$plateList[1] #for testing
 #for(idx_plate in master_list$project_details$plateList){
 for(idx_plate in master_list$project_details$plateList){
   
@@ -751,6 +783,7 @@ print visuals of each peak for check solution, LTR and PQC to evaluate the peak 
 ## peak Review
 
 ```{r, eval=TRUE}
+
 
 #1 export plots of check and LTR and PQC
 
@@ -1339,6 +1372,160 @@ dev.off()
 
 ```
 
+
+## CCC control charts
+
+create quick visual control charts for the control chart check. this chunk is skipped if it is a full plate analysis (control charts happen later)
+
+```{r}
+
+if(functionListMethod == "CCC"){
+  
+  #create dir.
+
+if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots"))){
+    dir.create(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots"))
+  }
+
+  if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/CCC"))){
+    dir.create(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/CCC"))
+  }
+  
+  
+  #open PDF
+  pageWidth <- length(master_list$project_details$plateList)
+
+ #open pdf device
+  pdf(
+    onefile = TRUE, width = (15 + pageWidth), height = 10,
+    file = paste0(
+      master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/CCC/", Sys.Date(), "_", master_list$project_details$project_name, "_SPE_", master_list$project_details$wash, "_CCC.pdf"
+      
+    )
+  )
+  
+  
+  
+  
+  #make plot list
+  CCCplotList <- names(master_list$data$peakAreaMetabolite)
+  CCCplotList <- CCCplotList[!grepl("-SIL", CCCplotList)] 
+  CCCplotList <- sort(CCCplotList)
+  
+  idxPlot = CCCplotList[4]
+  for(idxPlot in CCCplotList){
+    
+    message(paste0("printing CCC for ", idxPlot)) 
+    
+    subPlotList <- names(master_list$data$peakAreaMetabolite)[grepl(idxPlot, names(master_list$data$peakAreaMetabolite), fixed = TRUE)]
+    
+    plotData <- left_join(by = "sampleName",
+      master_list$data$peakAreaMetabolite[subPlotList[!grepl("SIL", subPlotList)]][[1]] %>%
+        filter(!grepl("check", sampleName, ignore.case = TRUE)),
+      master_list$data$peakAreaMetabolite[subPlotList[grepl("SIL", subPlotList)]][[1]] %>%
+        filter(!grepl("check", sampleName, ignore.case = TRUE)) %>%
+        select(sampleName, peakAreaMetabolite) %>%
+        rename(peakAreaSil = peakAreaMetabolite)
+    ) %>%
+      arrange(samplePlate, sampleName) %>%
+      add_column(
+        peakResponse = .$peakAreaMetabolite/.$peakAreaSil,
+        index = c(1:nrow(.))
+      ) %>%
+      select(index, samplePlate, sampleName, peakAreaMetabolite, peakAreaMetabolite, peakAreaSil, peakResponse) %>%
+      pivot_longer(data = .,
+        c("peakAreaMetabolite", "peakAreaSil", "peakResponse"),
+        names_to = "dataType",
+        values_to = "value"
+      ) %>%
+      mutate(
+        samplePlate = gsub("a", "", samplePlate),
+        samplePlate = gsub("b", "", samplePlate),
+        sampleType = sampleName %>% gsub(".*p0", "", .) %>% sub("_", "-", .)%>% gsub(".*-", "", .) %>% gsub("_.*", "", .)
+      )
+    
+    #set plate boundaries
+    plateBoundaryIdx = NULL
+    for(idxPlate in unique(plotData$samplePlate)){
+      plateBoundaryIdx <- c(
+        plateBoundaryIdx, 
+        plotData %>%
+          filter(samplePlate == idxPlate) %>%
+          .$index %>%
+          max()
+      )
+    }
+    
+    plateBoundaryIdx <- plateBoundaryIdx[-length(plateBoundaryIdx)]
+    
+    
+    #make plot
+
+    
+    plotList = list(
+      title = data.frame(x = 0.5, y = 0.5, label = idxPlot) %>%
+        ggplot(., aes(x = x, y = y, label = label)) +
+        geom_text(size = 6) +
+        theme_void() +  # removes axes and background
+        xlim(0, 1) + ylim(0, 1)  # optional: set limits to centre the text
+    )
+    
+    
+    idxData = unique(plotData$dataType)[3]
+    for(idxData in unique(plotData$dataType)){
+    
+      loopPlotData = plotData %>%
+        filter(dataType == idxData)
+      
+      #set custom y limits
+      ylimits = c(median(loopPlotData$value, na.rm = TRUE)- (IQR(loopPlotData$value, na.rm = TRUE)*4),
+            median(loopPlotData$value, na.rm = TRUE) + (IQR(loopPlotData$value, na.rm = TRUE)*4)
+          )
+      
+      #make plot
+      plotList[[idxData]] <- loopPlotData %>%
+        filter(sampleType != "SLTR") %>%
+        ggplot(
+          aes(
+            x=index,
+            y=value,
+            fill = sampleType,
+            shape = sampleType,
+            size=sampleType,
+            colour = sampleType
+          )
+        ) +
+        geom_point() +
+        scale_fill_manual(values = c("LTR" = "#F8766D", "PQC" = "#7CAE00", "SLTR" = "#00BFC4", "vLTR" = "black")) +
+        scale_colour_manual(values = c("LTR" = "black", "PQC" = "black", "SLTR" = "#00BFC4", "vLTR" = "black")) +
+        scale_shape_manual(values = c("LTR" = 21, "PQC" = 21, "SLTR" = 4, "vLTR" = 4))+
+        scale_size_manual(values = c("LTR" = 4, "PQC" = 4, "SLTR" = 1.5, "vLTR" = 2)) +
+        ggtitle(idxData)+ 
+        theme_bw() +
+        geom_vline(xintercept = plateBoundaryIdx) +
+        geom_hline(yintercept = loopPlotData %>% filter(sampleType == "PQC") %>% .$value %>% median(na.rm = TRUE), linetype = "dashed", colour = "#7CAE00", linewidth = 1)+
+        geom_hline(yintercept = loopPlotData %>% filter(sampleType == "LTR") %>% .$value %>% median(na.rm = TRUE), linetype = "dashed", colour = "#F8766D", linewidth = 1)+
+        geom_hline(yintercept = loopPlotData %>% filter(sampleType == "vLTR") %>% .$value %>% median(na.rm = TRUE), linetype = "dashed", colour = "black", linewidth = 0.5)+
+        ylim(ylimits) 
+        
+  }#idxData
+    
+    print(
+      cowplot::plot_grid(
+        plotlist = plotList,
+        ncol = 1 ,
+        rel_heights = c(0.1,1,1,1)
+    )
+    )
+  
+  } #idxPlot
+
+  dev.off() #turn off pdf
+  
+  } #if
+
+```
+
 #.
 
 # checkpoint save
@@ -1348,24 +1535,24 @@ dev.off()
 
 ```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
 
-# if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/rda/"))){
-#   dir.create(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/rda/"))
-# }
+if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/rda/"))){
+  dir.create(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/rda/"))
+}
+
+save(
+  master_list,
+  file = paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/rda/",
+                Sys.Date(), "_",
+                master_list$project_details$project_name,
+                "_SPE_AB_checkpoint_1.rda"
+  )
+)
+
+# load(file =  "C:\\Users\\300828F\\Murdoch University\\Australian National Phenome Centre - Technical & Operational\\Laboratory QA QC\\Control Chart Reviews\\SPE-MCX\\20250506_PLA_V2_LIFT\\N\\data\\rda\\2025-06-25_LIFT_SPE_AB_checkpoint_1.rda")
 # 
-# save(
-#   master_list,
-#   file = paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/rda/",
-#                 Sys.Date(), "_",
-#                 master_list$project_details$project_name,
-#                 "_SPE_AB_checkpoint_1.rda"
-#   )
-# )
-
-load(file =  "C:\\Users\\300828F\\Murdoch University\\Australian National Phenome Centre - Technical & Operational\\Laboratory QA QC\\Control Chart Reviews\\SPE-MCX\\20250506_PLA_V2_LIFT\\N\\data\\rda\\2025-06-25_LIFT_SPE_AB_checkpoint_1.rda")
-
-master_list$project_details$project_dir <- "C:\\Users\\300828F\\Murdoch University\\Australian National Phenome Centre - Technical & Operational\\Laboratory QA QC\\Control Chart Reviews\\SPE-MCX\\20250506_PLA_V2_LIFT"
-
-master_list$project_details$wash <- "N"
+# master_list$project_details$project_dir <- "C:\\Users\\300828F\\Murdoch University\\Australian National Phenome Centre - Technical & Operational\\Laboratory QA QC\\Control Chart Reviews\\SPE-MCX\\20250506_PLA_V2_LIFT"
+# 
+# master_list$project_details$wash <- "N"
 
 ```
 
