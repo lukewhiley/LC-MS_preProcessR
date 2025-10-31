@@ -241,6 +241,14 @@ checkIdx <- which(fileName$newName %in% checkFileName$newName)
 
 svDialogs::dlg_message("check folders. If all ahs worked correctly delete the original folders (without the a or b sub-tag)")
 
+
+
+```
+
+## peform directory check
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
 updatedFileList <- list.files(filePath, pattern = ".mzML", recursive = TRUE, full.names = TRUE); updatedFileList <- updatedFileList[!grepl("archive",updatedFileList)]; length(updatedFileList)
 
 #get list of dirs
@@ -250,8 +258,10 @@ dirPath <- dirPath[-which(dirPath %in% filePath)]
 
 svDialogs::dlg_message(paste0("there are ", length(updatedFileList), " mzml files in ", length(dirPath), " sub-plates (a/b): ", paste0(gsub(".*/", "", dirPath), collapse = "; ")))
 
+svDialogs::dlg_message(paste0("if this is incorrect, finalise subfoders and rerun this chunk"))
 
 ```
+
 
 ## read in templates
 
@@ -259,6 +269,8 @@ svDialogs::dlg_message(paste0("there are ", length(updatedFileList), " mzml file
 
 ```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
 
+
+#method copy
 svDialogs::dlg_message(paste0("copy the AB and N .exp methods used into a project methods folder: ", gsub(".*/", "~/", master_list$project_details$project_dir), "/msMethods"))
 
 
@@ -395,8 +407,27 @@ if(functionListMethod == "CCC"){
   matchedSil <- methodSil %>% gsub("-SIL.*", "", .)
   matchedSil <- functionList$metabolite[functionList$metabolite %in% matchedSil]
   
+  nList <- c(
+     "5-HIAA", "5-HIAA-SIL_d5", "CDCA", "CDCA-SIL_d4", "GCDCA", "GCDCA-SIL_d4", "GUDCA", "GUDCA-SIL_d4", 
+    "XA", "XA-SIL_d4", "12\\(R\\)-HETE", "12\\(R\\)-HETE-SIL_d8",  "15\\(S\\)-HETE","15\\(S\\)-HETE-SIL_d8", "8i-PGF2a", "8i-PGF2a-SIL_d4"
+    )
+  
+  abList <- c(
+    "3-HAA", "3-HAA-SIL_D3", "CAR\\(2:0\\)", "CAR\\(2:0\\)-SIL_d3", "CAR\\(4\\:0\\)", "CAR\\(4\\:0\\)-SIL_d3", "CAR\\(i5\\:0\\)", "CAR\\(i5\\:0\\)-SIL_d9", "KYN", "KYN-SIL_D4", "NEO", "NEO−SIL_13C5", "TRYP", "TRYP-SIL_d5", "SER", "SER-SIL_d4"
+  )
+  
 functionList <- functionList %>%
   filter(metabolite %in% c(methodSil, matchedSil))
+
+  if(master_list$project_details$wash[1] == "N"){
+    functionList <- functionList %>%
+    filter(grepl(paste0("^(", paste(nList, collapse = "|"), ")$"), metabolite))
+  }
+
+ if(master_list$project_details$wash[1] == "AB"){
+    functionList <- functionList %>%
+    filter(grepl(paste0("^(", paste(abList, collapse = "|"), ")$"), metabolite))
+  }
 
 }
 
@@ -963,7 +994,9 @@ for(idx_plate in master_list$project_details$plateList){
         geom_vline(xintercept = peakStartRT) +
         theme_bw() +
         ggtitle(paste0(idx_mrm, "; ", idx_plate, "; integration start = ", peakStartRT, "; integration end = ", peakEndRT)) +
-        scale_x_continuous(breaks = round(seq(min(reviewPlotData$time), max(reviewPlotData$time), by = 0.1), 1))
+        scale_x_continuous(breaks = round(seq(min(reviewPlotData$time), max(reviewPlotData$time), by = 0.1), 1)) +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+      
   )
    
   
