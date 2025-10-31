@@ -549,9 +549,9 @@ master_list$data$mzR[[idx_plate]] <- master_list$data$mzR[[idx_plate]][!grepl("(
   
 ```
 
-## Find peak boundaries
+## Find peak boundaries for targets
 
-identify peak boundaries using check solution as a reference. to work efficiently all analytes (incuding internal standards) should be in the check mix
+identify peak boundaries using check solution as a reference. 
 
 ```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
 
@@ -590,9 +590,9 @@ for(idx_plate in master_list$project_details$plateList){
     
     #cycle through each function to extract the chrom data
     #for testing
-    idx_function = "FUNCTION_129"
+    idx_function = "FUNCTION_13"
     
-    for(idx_function in unique(master_list$templates$msMethodLong$mrmFunction)){
+    for(idx_function in unique(master_list$templates$msMethodLong %>% filter(!grepl("-SIL", metabolite)) %>% .$mrmFunction)){
       
        #get metabolite string
        mrm_metabolite = master_list$templates$msMethodLong %>%
@@ -806,6 +806,274 @@ for(idx_metabolite in names(master_list$data$peakRegion)){
 
 
 ```
+
+
+## Find peak boundaries for SIL IS
+
+identify peak boundaries using LTR as a reference as internal standards not in check solution. 
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+master_list$data$peakRegionSIL <- list()
+#set object to temp store checkMzMLs
+checkMzml <- list()
+
+idx_plate = master_list$project_details$plateList[1] #for testing
+#for(idx_plate in master_list$project_details$plateList){
+for(idx_plate in master_list$project_details$plateList){
+  
+  #find index of check solution within idx_plate mzml directory
+  checkIndex <- master_list$data$mzR[[idx_plate]][grep("vLTR", master_list$data$mzR[[idx_plate]], ignore.case = TRUE)]
+  
+  idx_mzML = checkIndex[1] #for testing loop
+  for(idx_mzML in checkIndex){
+    
+    #read in mzML
+    if(!gsub("(?i).mzml", "", idx_mzML) %in% names(checkMzml)){
+      #create mzR object
+      checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_object <- mzR::openMSfile(
+        filename = paste0(master_list$project_details$plateDirList[grepl(idx_plate, master_list$project_details$plateDirList)], "/", idx_mzML)
+      )
+      #create mzR header
+      checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_header <- mzR::chromatogramHeader(
+        checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_object) %>%
+        as_tibble() %>% 
+        #mutate to avoid low value decimal making error in the output
+        mutate(precursorIsolationWindowTargetMZ = round(precursorIsolationWindowTargetMZ, 4),
+               productIsolationWindowTargetMZ = round(productIsolationWindowTargetMZ, 4))
+      #create mzR chromatogram
+      checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_chromatogram <- mzR::chromatograms(
+        checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_object)
+    }
+    
+    
+    #cycle through each function to extract the chrom data
+    #for testing
+    idx_function = "FUNCTION_15"
+    
+    for(idx_function in unique(master_list$templates$msMethodLong %>% filter(grepl("SIL", metabolite)) %>% .$mrmFunction)){
+      
+       #get metabolite string
+       mrm_metabolite = master_list$templates$msMethodLong %>%
+           filter(mrmFunction == idx_function) %>%
+           .$metabolite %>%
+           unique()
+       
+       
+      #get chromatogram header data
+      mzmlFuncHeader <- checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_header %>%
+        filter(grepl(paste0(gsub("_","=", casefold(idx_function)), " "), chromatogramId))
+      
+      
+      #do a check in case the functions have been updated in the project and change between files
+      
+      if(FALSE %in% (c(
+          mzmlFuncHeader$precursorIsolationWindowTargetMZ %in% (master_list$templates$msMethodLong %>% filter(mrmFunction == idx_function) %>% .$q1 %>% unique()),
+          mzmlFuncHeader$productIsolationWindowTargetMZ %in% (master_list$templates$msMethodLong %>% filter(mrmFunction == idx_function) %>% .$q3 %>% unique())
+        ))){
+        
+        #update idx_function
+        idx_function = checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_header %>% 
+          filter(precursorIsolationWindowTargetMZ %in% (master_list$templates$msMethodLong %>% filter(mrmFunction == idx_function) %>% .$q1 %>% unique())) %>% 
+          filter(productIsolationWindowTargetMZ %in% (master_list$templates$msMethodLong %>% filter(mrmFunction == idx_function) %>% .$q3 %>% unique())) %>%
+          .$chromatogramId %>%
+          gsub(".*function=", "function=", . ) %>%
+          gsub(" .*", "", .) %>%
+          gsub("=", "_", .) %>% 
+          toupper() %>%
+          unique()
+        
+        #update header
+        mzmlFuncHeader <- checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_header %>%
+          filter(grepl(paste0(gsub("_","=", casefold(idx_function)), " "), chromatogramId))
+        
+        }
+      
+      
+     #set channel index (within msFunction) for storing later
+     channel_index = 1
+       
+      idx_mrm = mzmlFuncHeader$chromatogramIndex[1]#for testing
+      for(idx_mrm in mzmlFuncHeader$chromatogramIndex){
+      #get metabolite metadata   
+      row_index = which(mzmlFuncHeader$chromatogramIndex==idx_mrm)
+      #store mrm details
+      precursor_mz = mzmlFuncHeader$precursorIsolationWindowTargetMZ[row_index]
+      product_mz = mzmlFuncHeader$productIsolationWindowTargetMZ[row_index]
+      
+        #set empty object for storing peak boundaries
+      if(!mrm_metabolite %in% names(master_list$data$peakRegionSIL)){
+        master_list$data$peakRegionSIL[[mrm_metabolite]] <- list()
+      } 
+      
+      #set modifiable loop chromatogram
+      loopChromatogram <- checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_chromatogram[[idx_mrm]] %>%
+        as_tibble() %>%
+        add_column(.before = 1,
+          scanIndex = 1:nrow(.)
+        ) %>%
+        setNames(c("scanIndex", "time", "intensity"))
+      
+      #create peak table
+      peakTable = tibble()
+      #fl.count = 9
+      smoothData <- loopChromatogram %>%
+          select(scanIndex, time) %>%
+          add_column(
+          intensity = loopChromatogram$intensity %>%
+            pracma::savgol(fl = 7, forder = 0, dorder = 0) %>%
+            pracma::savgol(fl = 5, forder = 0, dorder = 0) %>%
+            pracma::savgol(fl = 3, forder = 0, dorder = 0)
+            ) 
+      
+      smoothData <- smoothData %>%
+        as.matrix() %>%
+        smoothr::smooth_chaikin(., wrap = FALSE) %>%
+        as_tibble() %>%
+        setNames(c("scanIndex", "time", "intensity"))
+
+        #reset baseline to help findPeaks
+        smoothData$intensity[which(smoothData$intensity < 
+                                     (sd(smoothData$intensity)*0.1))] <- min(smoothData$intensity)
+          #create peak table
+      peakTable <- smoothData[["intensity"]] %>%
+        pracma::findpeaks(x=., nups = 5, ndowns = 5,  minpeakdistance = 20, sortstr = TRUE, minpeakheight = sd(.)) %>%
+        as_tibble() %>% setNames(c("intensity", "peakApexIndex", "peakStartIndex", "peakEndIndex"))
+      
+      if(nrow(peakTable) == 0){
+        peakTable <- tibble(
+          intensity = max(smoothData$intensity),
+          peakApexIndex = which.max(smoothData$intensity),
+          peakStartIndex = which(smoothData$intensity > min(smoothData$intensity))[1],
+          peakEndIndex = rev(which(smoothData$intensity > min(smoothData$intensity)))[1]
+          )
+      }
+
+      #set index of which peak to use from peakDetect table
+      peakTableRow = 1
+      
+      #store peak details
+      peakApexInt <- peakTable[["intensity"]][peakTableRow]
+      peakApexIndex <- peakTable[["peakApexIndex"]][peakTableRow]; peakApexRT <- smoothData[["time"]][peakApexIndex]
+      peakStartIndex <- peakTable[["peakStartIndex"]][peakTableRow]; peakStartRT <- smoothData[["time"]][peakStartIndex]
+      peakEndIndex <- peakTable[["peakEndIndex"]][peakTableRow]; peakEndRT <- smoothData[["time"]][peakEndIndex]
+      peakWidth <- peakEndIndex-peakStartIndex
+      
+       #creat a tibble to define peak
+      master_list$data$peakRegionSIL[[mrm_metabolite]] <- bind_rows(
+        master_list$data$peakRegionSIL[[mrm_metabolite]],
+        tibble(
+          ms_function = idx_function,
+          ms_channel = channel_index,
+          ms_header_id = idx_mrm,
+          sampleMetabolite = mrm_metabolite,
+          mrm = paste0(round(precursor_mz,2), " > ", round(product_mz,2)),
+          precursor_mz = precursor_mz,
+          product_mz = product_mz,
+          samplePlate = idx_plate,
+          sampleName = idx_mzML,
+          peakApexInt = peakApexInt,
+          peakStartRT = peakStartRT,
+          peakApexRT = peakApexRT,
+          peakEndRT = peakEndRT,
+          peakStartIndex =peakStartIndex,
+          peakApexIndex = peakApexIndex,
+          peakEndIndex =peakEndIndex,
+          peakWidth = peakWidth,
+          #flCount = fl.count
+        )
+      )
+      
+      channel_index <- channel_index+1
+      
+       } #idx_mrm
+      
+    } #idx_function
+    
+  } #idx_mzML
+  
+} #idx_plate
+    
+    
+
+
+## finalise peak boundaries
+
+#identify Q and q ions and finalise boundaries per plate
+
+master_list$data$peakRegionSILFinal <- list()
+
+#idx_metabolite = names(master_list$data$peakRegionSIL)[13]#for testing loop
+#idx_metabolite = "LTE4"
+for(idx_metabolite in names(master_list$data$peakRegionSIL)){
+  
+  master_list$data$peakRegionSILFinal[[idx_metabolite]] <- list()
+  
+  #first ID Q ion across plate
+    q_tibble <- list()
+    
+    idx_channel = unique(master_list$data$peakRegionSIL[[idx_metabolite]]$ms_channel)[1]
+    for(idx_channel in unique(master_list$data$peakRegionSIL[[idx_metabolite]]$ms_channel)){
+      mean_intensity = master_list$data$peakRegionSIL[[idx_metabolite]] %>%
+        filter(ms_channel == idx_channel) %>%
+        .$peakApexInt %>%
+        median(na.rm = TRUE)
+      q_tibble <- bind_rows(
+        q_tibble,
+        tibble(
+          ms_channel = idx_channel,
+          mean_int = mean_intensity)
+      )
+    }
+  
+  #identify Q ion channel 
+  Q_ion <- q_tibble$ms_channel[which.max(q_tibble$mean_int)]
+  
+  master_list$data$peakRegionSIL[[idx_metabolite]]$Q_q <- "q"
+  master_list$data$peakRegionSIL[[idx_metabolite]]$Q_q[which(master_list$data$peakRegionSIL[[idx_metabolite]]$ms_channel == Q_ion)] <- "Q"
+  
+  
+  #finalise peak bounday of Q ion
+  idx_plate = unique(master_list$data$peakRegionSIL[[idx_metabolite]]$samplePlate)[1] #for testing loop
+  #for(idx_plate in unique(master_list$data$peakRegionSIL[[idx_metabolite]]$samplePlate)[1]){ #for testing loop
+  for(idx_plate in unique(master_list$data$peakRegionSIL[[idx_metabolite]]$samplePlate)){
+    plate_data <- master_list$data$peakRegionSIL[[idx_metabolite]] %>%
+      filter(samplePlate==idx_plate) %>%
+      filter(Q_q == "Q")
+    
+    master_list$data$peakRegionSILFinal[[idx_metabolite]] <- bind_rows(
+      master_list$data$peakRegionSILFinal[[idx_metabolite]],
+      tibble(
+        sample_plate = idx_plate,
+        ms_function = plate_data$ms_function %>% unique(),
+        ms_channel_Q = plate_data$ms_channel %>% unique(),
+        ms_header_id = plate_data$ms_header_id %>% unique(),
+        metabolite = idx_metabolite,
+        precursor_mz = plate_data$precursor_mz %>% unique() %>% round(2),
+        product_mz = plate_data$product_mz %>% unique() %>% round(2),
+        mrm = paste0(plate_data$precursor_mz %>% unique() %>% round(2), " > " , plate_data$product_mz %>% unique() %>% round(2)),
+        peakStartRT = (((plate_data$peakStartRT %>% min(na.rm = TRUE)) *100) %>% floor()) /100,
+        peakEndRT =  (((plate_data$peakEndRT %>% min(na.rm = TRUE)) *100) %>% ceiling()) /100,
+        peakApexRT = plate_data$peakApexRT %>% mean(na.rm = TRUE) %>% round(2),
+        peakStartIndex = plate_data$peakStartIndex %>% min(na.rm = TRUE) %>% round(2),
+        peakEndIndex = plate_data$peakEndIndex %>% max(na.rm = TRUE) %>% round(2)
+      )
+    )
+  
+  }#idx_plate
+}#idx_metabolite
+
+
+#merge lists together and sort
+
+  master_list$data$peakRegionFinal <- master_list$data$peakRegionFinal %>%
+    append(
+      master_list$data$peakRegionSILFinal
+    )
+
+  master_list$data$peakRegionFinal <- master_list$data$peakRegionFinal[order(names(master_list$data$peakRegionFinal))]
+```
+
 
 # human check
 
