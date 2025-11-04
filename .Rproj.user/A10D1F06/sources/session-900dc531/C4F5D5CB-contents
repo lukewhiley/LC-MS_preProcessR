@@ -413,7 +413,7 @@ if(functionListMethod == "CCC"){
     )
   
   abList <- c(
-    "3-HAA", "3-HAA-SIL_D3", "CAR\\(2:0\\)", "CAR\\(2:0\\)-SIL_d3", "CAR\\(4\\:0\\)", "CAR\\(4\\:0\\)-SIL_d3", "CAR\\(i5\\:0\\)", "CAR\\(i5\\:0\\)-SIL_d9", "KYN", "KYN-SIL_D4", "NEO", "NEO−SIL_13C5", "TRYP", "TRYP-SIL_d5", "SER", "SER-SIL_d4"
+    "3-HAA", "3-HAA-SIL_D3", "CAR\\(2:0\\)", "CAR\\(2:0\\)-SIL_d3", "CAR\\(4\\:0\\)", "CAR\\(4\\:0\\)-SIL_d3", "CAR\\(i5\\:0\\)", "CAR\\(i5\\:0\\)-SIL_d9", "KYN", "KYN-SIL_D4", "NEO", "NEO-SIL_13C5", "TRYP", "TRYP-SIL_d5", "SER", "SER-SIL_d4"
   )
   
 functionList <- functionList %>%
@@ -455,13 +455,21 @@ svDialogs::dlg_message("now review method for errors (save in method subfolder)"
 svDialogs::dlg_message(paste0("review method, make any ad-hoc edits in the experiment and metabolite columns, then rename to _method_reviewed_", master_list$project_details$user_name, ".csv"))
 
 
+methodUpdateFile = list.files(
+  path = paste0(master_list$project_details$project_dir,"/msMethods/"), 
+  pattern = paste0("_", master_list$project_details$wash, "_method_reviewed_")
+  )
+
+svDialogs::dlg_message(paste0("is this your reviewed file ....................................................................... ", 
+                              methodUpdateFile, " ..... ...... ............ ................... .......... ........... .......... ............ .......... ..................... ......... .......... if not rerun chunk and edit name of file. move old files to archive folder."))
+
+
+
 #store in masterlist
 master_list$templates[['msMethod']] <- read_csv(
   paste0(master_list$project_details$project_dir,
                  "/msMethods/",
-                 Sys.Date(),
-                 "_", master_list$project_details$wash,
-                 "_method_reviewed_", master_list$project_details$user_name,".csv"
+                 methodUpdateFile
   )
 )
 
@@ -563,11 +571,14 @@ idx_plate = master_list$project_details$plateList[1] #for testing
 #for(idx_plate in master_list$project_details$plateList){
 for(idx_plate in master_list$project_details$plateList){
   
+  print(idx_plate)
+  
   #find index of check solution within idx_plate mzml directory
   checkIndex <- master_list$data$mzR[[idx_plate]][grep("check", master_list$data$mzR[[idx_plate]], ignore.case = TRUE)]
   
   idx_mzML = checkIndex[1] #for testing loop
   for(idx_mzML in checkIndex){
+    print(idx_mzML)
     
     #read in mzML
     if(!gsub("(?i).mzml", "", idx_mzML) %in% names(checkMzml)){
@@ -747,6 +758,7 @@ master_list$data$peakRegionFinal <- list()
 #idx_metabolite = names(master_list$data$peakRegion)[13]#for testing loop
 #idx_metabolite = "LTE4"
 for(idx_metabolite in names(master_list$data$peakRegion)){
+  print(idx_metabolite)
   
   master_list$data$peakRegionFinal[[idx_metabolite]] <- list()
   
@@ -778,6 +790,7 @@ for(idx_metabolite in names(master_list$data$peakRegion)){
   idx_plate = unique(master_list$data$peakRegion[[idx_metabolite]]$samplePlate)[1] #for testing loop
   #for(idx_plate in unique(master_list$data$peakRegion[[idx_metabolite]]$samplePlate)[1]){ #for testing loop
   for(idx_plate in unique(master_list$data$peakRegion[[idx_metabolite]]$samplePlate)){
+    print(idx_plate)
     plate_data <- master_list$data$peakRegion[[idx_metabolite]] %>%
       filter(samplePlate==idx_plate) %>%
       filter(Q_q == "Q")
@@ -1072,6 +1085,7 @@ for(idx_metabolite in names(master_list$data$peakRegionSIL)){
     )
 
   master_list$data$peakRegionFinal <- master_list$data$peakRegionFinal[order(names(master_list$data$peakRegionFinal))]
+  
 ```
 
 
@@ -1138,6 +1152,7 @@ peakReview <- list()
 reviewPlotDataAll <- list()
 
 for(idx_plate in master_list$project_details$plateList){
+  print(idx_plate)
   
     #get precursor and product info from peakRegion table
   precursor_mz = master_list$data$peakRegionFinal[[idx_mrm]] %>%
@@ -1152,6 +1167,8 @@ for(idx_plate in master_list$project_details$plateList){
   mzml_mrm <- master_list$data$peakRegionFinal[[idx_mrm]] %>%
     filter(sample_plate == idx_plate) %>%
     .$ms_header_id
+  #print plate function 
+  print(paste0("plate MS function = ", mzml_mrm))
   #peakStart in check
   peakStartRT = master_list$data$peakRegionFinal[[idx_mrm]] %>%
     filter(sample_plate == idx_plate) %>%
