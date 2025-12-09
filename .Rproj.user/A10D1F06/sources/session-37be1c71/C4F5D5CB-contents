@@ -84,6 +84,9 @@ master_list$project_details$user_name <- svDialogs::dlg_input("user initials: ",
 #set project name
 master_list$project_details$project_name <-  svDialogs::dlg_input("project name: ", "")$res
 
+#set filePath
+filePath <- paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash,"/data/mzml")
+
 ```
 
 
@@ -95,32 +98,34 @@ master_list$project_details$project_name <-  svDialogs::dlg_input("project name:
 svDialogs::dlg_message(paste0("set up mzml folder in project directory as follows:  " , gsub(".*/", "~/", master_list$project_details$project_dir), "/", master_list$project_details$wash, "/data/mzml")); 
 svDialogs::dlg_message("copy all mzmls into this folder, do not sort into subfolders");
 svDialogs::dlg_message("NOTE THIS SCRIPT WILL NOT WORK ON WINDOWS IF PATH LENGTH IS >260 CHARACTERS")
-pathLength = nchar(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/mzml"))
-svDialogs::dlg_message(paste0("Your path length is: ", pathLength))
-if(pathLength >= 255){
-  svDialogs::dlg_message(paste0("Your path length is approaching the Windows maximum of 260. If you are on Windows it may fail."))
-}
-
-if(pathLength < 255){
-  svDialogs::dlg_message(paste0("Your path length looks OK and is shorter than the Windows maximum of 260."))
-}
-
- 
 #set filePath
 filePath <- paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash,"/data/mzml")
-
 
 #first move mzML into individual plates
 fileList <- list.files(filePath, pattern = ".mzML", recursive = FALSE, full.names = TRUE)
 svDialogs::dlg_message(paste0("there are ", length(fileList), " mzml files"))
 
-#only perform the following steps if there are mzMLs in the folder
 if(length(fileList) > 0){
+
+pathLength = nchar(fileList[1])
+svDialogs::dlg_message(paste0("Your path length is: ", pathLength))
+
+
+if(pathLength >= 240){
+  svDialogs::dlg_message(paste0("Your path length is approaching the Windows maximum of 260. If you are on Windows it will fail. Move project to a shorter length directory"))
+}
+
+if(pathLength < 240){
+  svDialogs::dlg_message(paste0("Your path length looks OK and is shorter than the Windows maximum of 260."))
+}
+
+#only perform the following steps if there are mzMLs in the folder
+if(length(fileList) > 0 & pathLength < 240){
   
 #sort files into plate subfolders
 plateList <-  fileList %>% gsub(".*SS", "SS", .) %>% gsub(".*p0", "p0", .) %>% gsub("_.*", "", .) %>% unique()
 
-idxPlate = plateList[2]
+idxPlate = plateList[1]
 for(idxPlate in plateList){
   plateMZML <- fileList[grepl(idxPlate, fileList)]
 
@@ -237,6 +242,7 @@ checkIdx <- which(fileName$newName %in% checkFileName$newName)
   #unlink(idxDir, recursive=TRUE)
 
   }
+}
 }
 
 svDialogs::dlg_message("check folders. If all ahs worked correctly delete the original folders (without the a or b sub-tag)")
