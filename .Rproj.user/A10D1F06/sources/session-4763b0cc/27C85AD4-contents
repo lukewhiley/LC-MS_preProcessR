@@ -438,6 +438,7 @@ functionList <- functionList %>%
 }
 
 
+
 ```
 
 ## review mrm method
@@ -1703,8 +1704,20 @@ create quick visual control charts for the control chart check. this chunk is sk
 
 ```{r}
 
-if(functionListMethod == "CCC"){
+#if(functionListMethod == "CCC"){
+
+
   
+nList <- c(
+  "5-HIAA", "5-HIAA-SIL_d5", "CDCA", "CDCA-SIL_d4", "GCDCA", "GCDCA-SIL_d4", "GUDCA", "GUDCA-SIL_d4", 
+  "XA", "XA-SIL_d4", "12\\(R\\)-HETE", "12\\(R\\)-HETE-SIL_d8",  "15\\(S\\)-HETE","15\\(S\\)-HETE-SIL_d8", "8i-PGF2a", "8i-PGF2a-SIL_d4"
+)
+
+abList <- c(
+  "3-HAA", "3-HAA-SIL_D3", "CAR(2:0)", "CAR(2:0)-SIL_d3", "CAR(4:0)", "CAR(4:0)-SIL_d3", "CAR(i5:0)", "CAR(i5:0)-SIL_d9", "KYN", "KYN-SIL_D4", "NEO", "NEO-SIL_13C5", "TRYP", "TRYP-SIL_d5", "SER", "SER-SIL_d4"
+)
+
+
   #create dir.
 
 if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots"))){
@@ -1716,60 +1729,57 @@ if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$
   }
   
   
-  #open PDF
-  pageWidth <- length(master_list$project_details$plateList)
+#make plot list
+if(master_list$project_details$wash == "AB"){CCCplotList <- abList}; if(master_list$project_details$wash == "N"){CCCplotList <- nList}
+CCCplotList <- CCCplotList[!grepl("-SIL", CCCplotList)] 
+CCCplotList <- sort(CCCplotList)
 
- #open pdf device
-  pdf(
-    onefile = TRUE, width = (15 + pageWidth), height = 10,
-    file = paste0(
-      master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/CCC/", Sys.Date(), "_", master_list$project_details$project_name, "_SPE_", master_list$project_details$wash, "_CCC.pdf"
-      
-    )
+#open PDF
+pageWidth <- length(master_list$project_details$plateList)
+
+#open pdf device
+pdf(
+  onefile = TRUE, width = (15 + pageWidth), height = 10,
+  file = paste0(
+    master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/CCC/", Sys.Date(), "_", master_list$project_details$project_name, "_SPE_", master_list$project_details$wash, "_CCC.pdf"
+    
   )
+)
+
+idxPlot = CCCplotList[2]
+for(idxPlot in CCCplotList){
   
+  message(paste0("printing CCC for ", idxPlot)) 
   
+  subPlotList <- names(master_list$data$peakAreaMetabolite)[grepl(idxPlot, names(master_list$data$peakAreaMetabolite), fixed = TRUE)]
   
-  
-  #make plot list
-  CCCplotList <- names(master_list$data$peakAreaMetabolite)
-  CCCplotList <- CCCplotList[!grepl("-SIL", CCCplotList)] 
-  CCCplotList <- sort(CCCplotList)
-  
-  idxPlot = CCCplotList[4]
-  for(idxPlot in CCCplotList){
-    
-    message(paste0("printing CCC for ", idxPlot)) 
-    
-    subPlotList <- names(master_list$data$peakAreaMetabolite)[grepl(idxPlot, names(master_list$data$peakAreaMetabolite), fixed = TRUE)]
-    
-    plotData <- left_join(by = "sampleName",
-      master_list$data$peakAreaMetabolite[subPlotList[!grepl("SIL", subPlotList)]][[1]] %>%
-        filter(!grepl("check", sampleName, ignore.case = TRUE)),
-      master_list$data$peakAreaMetabolite[subPlotList[grepl("SIL", subPlotList)]][[1]] %>%
-        filter(!grepl("check", sampleName, ignore.case = TRUE)) %>%
-        select(sampleName, peakAreaMetabolite) %>%
-        rename(peakAreaSil = peakAreaMetabolite)
+  plotData <- left_join(by = "sampleName",
+                        master_list$data$peakAreaMetabolite[subPlotList[!grepl("SIL", subPlotList)]][[1]] %>%
+                          filter(!grepl("check", sampleName, ignore.case = TRUE)),
+                        master_list$data$peakAreaMetabolite[subPlotList[grepl("SIL", subPlotList)]][[1]] %>%
+                          filter(!grepl("check", sampleName, ignore.case = TRUE)) %>%
+                          select(sampleName, peakAreaMetabolite) %>%
+                          rename(peakAreaSil = peakAreaMetabolite)
+  ) %>%
+    arrange(samplePlate, sampleName) %>%
+    add_column(
+      peakResponse = .$peakAreaMetabolite/.$peakAreaSil,
+      index = c(1:nrow(.))
     ) %>%
-      arrange(samplePlate, sampleName) %>%
-      add_column(
-        peakResponse = .$peakAreaMetabolite/.$peakAreaSil,
-        index = c(1:nrow(.))
-      ) %>%
-      select(index, samplePlate, sampleName, peakAreaMetabolite, peakAreaMetabolite, peakAreaSil, peakResponse) %>%
-      pivot_longer(data = .,
-        c("peakAreaMetabolite", "peakAreaSil", "peakResponse"),
-        names_to = "dataType",
-        values_to = "value"
-      ) %>%
-      mutate(
-        samplePlate = gsub("a", "", samplePlate),
-        samplePlate = gsub("b", "", samplePlate),
-        sampleType = sampleName %>% gsub(".*p0", "", .) %>% sub("_", "-", .)%>% gsub(".*-", "", .) %>% gsub("_.*", "", .)
-      )
-    
-    #set plate boundaries
-    plateBoundaryIdx = NULL
+    select(index, samplePlate, sampleName, peakAreaMetabolite, peakAreaMetabolite, peakAreaSil, peakResponse) %>%
+    pivot_longer(data = .,
+                 c("peakAreaMetabolite", "peakAreaSil", "peakResponse"),
+                 names_to = "dataType",
+                 values_to = "value"
+    ) %>%
+    mutate(
+      samplePlate = gsub("a", "", samplePlate),
+      samplePlate = gsub("b", "", samplePlate),
+      sampleType = sampleName %>% gsub(".*p0", "", .) %>% sub("_", "-", .)%>% gsub(".*-", "", .) %>% gsub("_.*", "", .)
+    )
+  
+  #set plate boundaries
+  plateBoundaryIdx = NULL
     for(idxPlate in unique(plotData$samplePlate)){
       plateBoundaryIdx <- c(
         plateBoundaryIdx, 
@@ -1846,7 +1856,7 @@ if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$
 
   dev.off() #turn off pdf
   
-  } #if
+  #} #if
 
 ```
 
@@ -1868,7 +1878,9 @@ save(
   file = paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/rda/",
                 Sys.Date(), "_",
                 master_list$project_details$project_name,
-                "_SPE_AB_checkpoint_1.rda"
+                "_SPE_",
+                master_list$project_details$wash,
+                "_checkpoint_1.rda"
   )
 )
 
