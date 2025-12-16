@@ -45,7 +45,7 @@ To set up the project please use the following template
 ```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
 
 #load packages
-package_list <- c('statTarget', 'svDialogs', 'ggpubr', 'janitor', 'mzR', 'cowplot', 'tidyverse', 'fedmatch','sva')
+package_list <- c('statTarget', 'svDialogs', 'ggpubr', 'janitor', 'mzR', 'cowplot', 'tidyverse', 'fedmatch','sva', 'gghalves')
 
 for(idx_package in package_list){
   if(length(which(row.names(installed.packages()) == idx_package)) > 0){
@@ -1884,11 +1884,15 @@ save(
   )
 )
 
-# load(file =  "C:\\Users\\300828F\\Murdoch University\\Australian National Phenome Centre - Technical & Operational\\Laboratory QA QC\\Control Chart Reviews\\SPE-MCX\\20250506_PLA_V2_LIFT\\N\\data\\rda\\2025-06-25_LIFT_SPE_AB_checkpoint_1.rda")
-# 
-# master_list$project_details$project_dir <- "C:\\Users\\300828F\\Murdoch University\\Australian National Phenome Centre - Technical & Operational\\Laboratory QA QC\\Control Chart Reviews\\SPE-MCX\\20250506_PLA_V2_LIFT"
-# 
-# master_list$project_details$wash <- "N"
+# load(
+#   file = paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/rda/",
+#                 Sys.Date(), "_",
+#                 master_list$project_details$project_name,
+#                 "_SPE_",
+#                 master_list$project_details$wash,
+#                 "_checkpoint_1.rda"
+#   )
+# )
 
 ```
 
@@ -2339,9 +2343,15 @@ if(!dir.exists(paste0(skylineR_directory, "\\statTarget"))){
   dir.create(paste0(skylineR_directory, "\\statTarget"))
 }
 
+
 #set qc-type
+master_list$project_details$statTarget_qc_type <- "hold"
+
+while(master_list$project_details$statTarget_qc_type != "LTR" & master_list$project_details$statTarget_qc_type != "VLTR" & master_list$project_details$statTarget_qc_type != "PQC"){
+
 master_list$project_details$statTarget_qc_type <- dlgInput("which qc type will be used for statTarget", "VLTR/LTR/PQC - default is PQC")$res
 
+}
 
 #create data list 
 FUNC_list <- list()
@@ -2714,48 +2724,71 @@ rm(list = c(ls()[which(ls() != "master_list")]))
 master_list$data$response <- list()
 
 #reset table
-master_list$templates$metaboliteNames$matchedSilUsed <- NULL; master_list$templates$metaboliteNames$silUsed_imputed <- NULL; master_list$templates$metaboliteNames$silUsed_combat <- NULL; master_list$templates$metaboliteNames$silUsed_statTarget <- NULL; master_list$templates$metaboliteNames$silUsed <- NULL
+master_list$templates$metaboliteNames$matchedSilUsed <- NA; master_list$templates$metaboliteNames$silUsed_imputed <- NA; master_list$templates$metaboliteNames$silUsed_combat <- NA; master_list$templates$metaboliteNames$silUsed_statTarget <- NA; master_list$templates$metaboliteNames$silUsed <- NA; master_list$templates$metaboliteNames
 
 
 
-master_list$templates$metaboliteNames[["silUsed"]] = NA
+#master_list$templates$metaboliteNames[["silUsed"]] = NA
 
+idx_dataType = "imputed"
 for(idx_dataType in c("imputed", "combat", "statTarget")){
   
   master_list$data$response[[idx_dataType]] <- list()
-
-#first calculate response for matched internal standards
-silList <- master_list$data$peakArea[[idx_dataType]] %>% 
-  bind_rows() %>%
-  select(contains("_sil")) %>%
-  names()
-
- 
-for(idx_plate in names(master_list$data$peakArea[[idx_dataType]])){
   
-  master_list$data$response[[idx_dataType]][[idx_plate]] <- master_list$data$peakArea[[idx_dataType]][[idx_plate]] %>% 
-     select(contains("sample")) 
+  #first calculate response for matched internal standards
+  silList <- master_list$data$peakArea[[idx_dataType]] %>% 
+    bind_rows() %>%
+    select(contains("_sil")) %>%
+    names()
   
-  #change data source
-  master_list$data$response[[idx_dataType]][[idx_plate]]$sample_data_source <- "imputeResponse"
+  #loopData 
+  loopData <- master_list$data$peakArea[[idx_dataType]] %>%
+    bind_rows()
   
-  #set loop data
-  loopData <- master_list$data$peakArea[[idx_dataType]][[idx_plate]]
-  
-  idx_sil = silList[1]
+  idx_sil = silList[15]
   for(idx_sil in silList){
-  
-  loopSilData <- loopData[[idx_sil]]
-  #find target
-  loopTarget <- gsub("_sil.*", "", idx_sil) 
-  
-  if(length(which(names(loopData) == loopTarget)) == 1){
-    #store SIL used  
-    master_list$templates$metaboliteNames$silUsed[which(master_list$templates$metaboliteNames$newNames == loopTarget)] <- 
-       master_list$templates$metaboliteNames$oldNames[which(master_list$templates$metaboliteNames$newNames ==  idx_sil)]
+    #print(idx_sil)
+    
+    #find target
+    loopTarget <- gsub("_sil.*", "", idx_sil) 
+    
+   
+    
+    if(length(which(names(loopData) == loopTarget)) == 1){
+      
+      #store SIL used  
+      master_list$templates$metaboliteNames[[paste0("silUsed_", idx_dataType)]][which(master_list$templates$metaboliteNames$newNames == loopTarget)] <- 
+        master_list$templates$metaboliteNames$oldNames[which(master_list$templates$metaboliteNames$newNames ==  idx_sil)]
+      
+      
+      #turn matchedSilused to TRUE
+      master_list$templates$metaboliteNames$matchedSilUsed[which(master_list$templates$metaboliteNames$newNames == loopTarget)] <- 
+        TRUE
+      
+
+  for(idx_plate in names(master_list$data$peakArea[[idx_dataType]])){
+    
+    #create dataframe for first iteration of loop
+    if(is.null(master_list$data$response[[idx_dataType]][[idx_plate]])){
+    
+    master_list$data$response[[idx_dataType]][[idx_plate]] <- master_list$data$peakArea[[idx_dataType]][[idx_plate]] %>% 
+      select(contains("sample")) 
+    
+    #change data source
+    master_list$data$response[[idx_dataType]][[idx_plate]]$sample_data_source <- "imputeResponse"
+    
+    
+    }# is.null
+    
+    
+    #set loop data
+    loopData <- master_list$data$peakArea[[idx_dataType]][[idx_plate]]
     
     #get metabolte target data
     loopTargetData <- loopData[[loopTarget]]
+    
+    #getSil data
+    loopSilData <- loopData[[idx_sil]]
     
     #create response
     loopResponse <- tibble(
@@ -2767,23 +2800,16 @@ for(idx_plate in names(master_list$data$peakArea[[idx_dataType]])){
       bind_cols(
         loopResponse
       )
-  
+        
+        
+      } #idxPlate
+      
+    } #idx_sil
     
-  } #if
+  } #idx_dataType
   
-  } #idx_sil
+} #if
   
-} #idx_plate
-
-} #idx_dataType
-
-
-#rename column
-master_list$templates$metaboliteNames <- master_list$templates$metaboliteNames %>%
-  rename(
-    matchedSilUsed = silUsed
-  )
-
 
 
 ```
@@ -2792,19 +2818,19 @@ master_list$templates$metaboliteNames <- master_list$templates$metaboliteNames %
 
 ```{r}
 
+#get list of metabolites
+metaboliteList <- master_list$templates$metaboliteNames[-which(master_list$templates$metaboliteNames$matchedSilUsed == TRUE),] %>%
+  filter(!grepl("sil", newNames, ignore.case = TRUE)) %>% 
+  .$newNames
+
+
+  
 idx_dataType = "imputed"
 for(idx_dataType in c("imputed", "combat", "statTarget")){
   
-   master_list$templates$metaboliteNames[[paste0("silUsed_", idx_dataType)]] = master_list$templates$metaboliteNames$matchedSilUsed
+  #print(idx_dataType)
   
 
-#get list of metabolites
-metaboliteList <- master_list$data$peakArea[[idx_dataType]] %>% 
-  bind_rows() %>%
-  select(!names(master_list$data$response[[idx_dataType]][[1]])) %>%
-  select(!contains("_sil")) %>%
-  names()
-  
   #set loop data
   loopData <- master_list$data$peakArea[[idx_dataType]] %>% bind_rows()
   loopDataQC <- loopData %>% filter(sample_type == "pqc")
@@ -2812,6 +2838,7 @@ metaboliteList <- master_list$data$peakArea[[idx_dataType]] %>%
   #find best surrogate based on PQC rsd
   idx_metabolite = metaboliteList[1]
   for(idx_metabolite in metaboliteList){
+    #print(idx_metabolite)
     #get experiment
     metaboliteExperiment <- master_list$templates$metaboliteNames$experiment[which(master_list$templates$metaboliteNames$newNames == idx_metabolite)]
     #get polarity
@@ -2829,7 +2856,7 @@ metaboliteList <- master_list$data$peakArea[[idx_dataType]] %>%
     rtBracket = 1.5 #for testing while loop
     
     while (is.null(rsdOut) & minRSD > 30 & rtBracket < 5.1){
-           #nrow(as_tibble(rsdOut)) != length(silList)) {
+      #nrow(as_tibble(rsdOut)) != length(silList)) {
       
       idx_sil = silList[1]
       for(idx_sil in (silList)){
@@ -2854,32 +2881,32 @@ metaboliteList <- master_list$data$peakArea[[idx_dataType]] %>%
           )
         }
       }
-    #if not matching sil then reduce requirement for experiment match
-    if(is.null(rsdOut) == TRUE){
-      for(idx_sil in (silList)){
-        #get polarity
-        silPolarity <- master_list$templates$metaboliteNames$polarity[which(master_list$templates$metaboliteNames$newNames == idx_sil)]
-        #getRT
-        silRT <- master_list$templates$metaboliteNames$rt[which(master_list$templates$metaboliteNames$newNames == idx_sil)]
-        
-        if(metabolitePolarity == silPolarity & silRT > (metaboliteRT - rtBracket) & silRT < (metaboliteRT + rtBracket)){
+      #if not matching sil then reduce requirement for experiment match
+      if(is.null(rsdOut) == TRUE){
+        for(idx_sil in (silList)){
+          #get polarity
+          silPolarity <- master_list$templates$metaboliteNames$polarity[which(master_list$templates$metaboliteNames$newNames == idx_sil)]
+          #getRT
+          silRT <- master_list$templates$metaboliteNames$rt[which(master_list$templates$metaboliteNames$newNames == idx_sil)]
           
-          #print(idx_sil)
-          loopSilData <- loopDataQC[[idx_sil]]
-          loopResponse <- loopMetaboliteData/loopSilData
-          loopRSD <- ((sd(loopResponse, na.rm = TRUE)*100)/mean(loopResponse, na.rm = TRUE)) %>% round(1)
-          
-          rsdOut <- rbind(rsdOut, 
-                          (c(idx_sil, loopRSD))
-          )
+          if(metabolitePolarity == silPolarity & silRT > (metaboliteRT - rtBracket) & silRT < (metaboliteRT + rtBracket)){
+            
+            #print(idx_sil)
+            loopSilData <- loopDataQC[[idx_sil]]
+            loopResponse <- loopMetaboliteData/loopSilData
+            loopRSD <- ((sd(loopResponse, na.rm = TRUE)*100)/mean(loopResponse, na.rm = TRUE)) %>% round(1)
+            
+            rsdOut <- rbind(rsdOut, 
+                            (c(idx_sil, loopRSD))
+            )
+          }
         }
       }
-    }
-       
+      
       #save target SIL
       if(nrow(rsdOut %>% as_tibble) > 0){minRSD <- rsdOut %>% as_tibble() %>% .$V2 %>% as.numeric() %>% min(na.rm = TRUE)}
       rtBracket <- rtBracket + 0.5
-        
+      
     }#while
     
     if(!is.null(rsdOut)){
@@ -2901,18 +2928,16 @@ metaboliteList <- master_list$data$peakArea[[idx_dataType]] %>%
       #add sil_choice to template
       master_list$templates$metaboliteNames[[paste0("silUsed_", idx_dataType)]][which(master_list$templates$metaboliteNames$newNames == idx_metabolite)] <- 
         master_list$templates$metaboliteNames$oldNames[which(master_list$templates$metaboliteNames$newNames ==  sil_choice)]
-
+      
+      #turn matchedSilused to TRUE
+      master_list$templates$metaboliteNames$matchedSilUsed[which(master_list$templates$metaboliteNames$newNames == idx_metabolite)] <- 
+        FALSE
+      
     } #!is.null
     
-  } 
+  } #idx_metabolite
   
 } #for idx_dataType
-
-
-#tidy SIL columns
-  master_list$templates$metaboliteNames$matchedSilUsed[!is.na(master_list$templates$metaboliteNames$matchedSilUsed)] <- TRUE
-  master_list$templates$metaboliteNames$matchedSilUsed[is.na(master_list$templates$metaboliteNames$matchedSilUsed)] <- FALSE
-  master_list$templates$metaboliteNames$matchedSilUsed[grepl("-sil", master_list$templates$metaboliteNames$oldNames, ignore.case = TRUE)] <- NA
   
 
 
@@ -3001,23 +3026,22 @@ if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$
 }
 
 
-
  write_csv(
    master_list$templates$metaboliteNames %>%
-     select(-silUsed_imputed, -silUsed_combat) %>%
+     select(-silUsed_imputed, -silUsed_combat, -silUsed) %>%
      left_join(
        .,
        master_list$summary_tables$rsdOut$statTarget, 
        by = "newNames"
-     ),
+     ) %>% 
+     filter(!grepl("sil", newNames)) %>%
+     arrange(desc(matchedSilUsed), oldNames),
    file = paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/internalStandardSelection/",
                  Sys.Date(), "_internStandards_forReview.csv")
  )
 
 
 ```
-
-## revise internal standards
 
 *USER INPUT REQUIRED*
 
@@ -3036,7 +3060,7 @@ updated_metaboliteNames <- read_csv(file = paste0(master_list$project_details$pr
 #update master list
 
 master_list$templates$metaboliteNames <- master_list$templates$metaboliteNames %>%
-  select(-silUsed_statTarget) %>%
+  select(-silUsed_statTarget, -silUsed) %>%
   left_join(
     by = "tidyName",
     updated_metaboliteNames %>% 
@@ -3073,7 +3097,7 @@ pageWidth <- length(master_list$project_details$plateList)
   
  
   
-idx_metabolite = "i3aa"
+idx_metabolite = "x3_haa"
 for(idx_metabolite in (master_list$data$response$statTarget %>% bind_rows() %>% select(!contains("sample")) %>% names())){
   
   
@@ -3187,11 +3211,12 @@ for(idx_metabolite in (master_list$data$response$statTarget %>% bind_rows() %>% 
      )
    
    #join data
-   plotData <- bind_rows(
+   plotDataALL <- bind_rows(
      plotData,
      plotDataCor
    ) %>%
-   mutate(sample_type = factor(sample_type, levels = c("sample", "sampleCor", "pqc", "pqcCor", "ltr", "ltrCor", "NA"), ordered = TRUE)) 
+   mutate(sample_type = factor(sample_type, levels = c("sample", "sampleCor", "pqc", "pqcCor", "ltr", "ltrCor", "NA"), ordered = TRUE)) %>%
+     arrange(sample_name, dataType)
    
     
   ####--------------------
@@ -3201,25 +3226,25 @@ for(idx_metabolite in (master_list$data$response$statTarget %>% bind_rows() %>% 
   
     
   #add facet column
-  plotData[["facet"]] <- NA
+  plotDataALL[["facet"]] <- NA
    
    #area
-   plotData$facet[which(plotData$dataType == "area")] <- paste0("1. area;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "area")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "areaCor")] %>% floor(), "%")
+   plotDataALL$facet[which(plotDataALL$dataType == "area")] <- paste0("1. area;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "area")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "areaCor")] %>% floor(), "%")
    
    #areaCor
-   plotData$facet[which(plotData$dataType == "areaCor")] <- paste0("1. area;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "area")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "areaCor")] %>% floor(), "%")
+   plotDataALL$facet[which(plotDataALL$dataType == "areaCor")] <- paste0("1. area;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "area")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "areaCor")] %>% floor(), "%")
    
    #silArea
-   plotData$facet[which(plotData$dataType == "silArea")] <- paste0("2. silArea;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "silArea")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "silAreaCor")] %>% floor(), "%")
+   plotDataALL$facet[which(plotDataALL$dataType == "silArea")] <- paste0("2. silArea;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "silArea")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "silAreaCor")] %>% floor(), "%")
    
     #silAreaCor
-   plotData$facet[which(plotData$dataType == "silAreaCor")] <- paste0("2. silArea;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "silArea")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "silAreaCor")] %>% floor(), "%")
+   plotDataALL$facet[which(plotDataALL$dataType == "silAreaCor")] <- paste0("2. silArea;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "silArea")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "silAreaCor")] %>% floor(), "%")
                     
    #response                                                                                                               
-  plotData$facet[which(plotData$dataType == "response")] <- paste0("3. response;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "response")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "responseCor")] %>% floor(), "%")
+  plotDataALL$facet[which(plotDataALL$dataType == "response")] <- paste0("3. response;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "response")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "responseCor")] %>% floor(), "%")
   
   #responseCor
-    plotData$facet[which(plotData$dataType == "responseCor")] <- paste0("3. response;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "response")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "responseCor")] %>% floor(), "%")
+    plotDataALL$facet[which(plotDataALL$dataType == "responseCor")] <- paste0("3. response;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "response")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "responseCor")] %>% floor(), "%")
   
   
   #add facet for median PQC hline 
@@ -3259,9 +3284,9 @@ for(idx_metabolite in (master_list$data$response$statTarget %>% bind_rows() %>% 
   )
   
   #create plot
-  ccPlot <- ggplot(data = plotData, aes(x = sample_run_index, y = value)) +
-    geom_point(data = plotData %>% filter(grepl("sample", sample_type)), aes(colour = sample_type,fill = sample_type, shape = sample_type, size = sample_type)) +
-    geom_point(data = plotData %>% filter(!grepl("sample", sample_type)), aes(colour = sample_type,fill = sample_type, shape = sample_type, size = sample_type)) +
+  ccPlot <- ggplot(data = plotDataALL, aes(x = sample_run_index, y = value)) +
+    geom_point(data = plotDataALL %>% filter(grepl("sample", sample_type)), aes(colour = sample_type,fill = sample_type, shape = sample_type, size = sample_type)) +
+    geom_point(data = plotDataALL %>% filter(!grepl("sample", sample_type)), aes(colour = sample_type,fill = sample_type, shape = sample_type, size = sample_type)) +
     theme_bw() +
     scale_shape_manual(values = c("sample" = 0, "sampleCor" = 23, "pqc" = 22, "pqcCor" = 23, "ltr" = 22, "ltrCor" = 23)) +
     scale_size_manual(values = c("sample" = 2, "sampleCor" = 2, "pqc" = 3, "pqcCor" = 3, "ltr" = 3, "ltrCor" = 3)) +
@@ -3280,7 +3305,7 @@ for(idx_metabolite in (master_list$data$response$statTarget %>% bind_rows() %>% 
   ## VIolin plots
   ####------------------------
   
-  violinData = plotData %>% 
+  violinData = plotDataALL %>% 
     #filter(dataType == "responseBatchCorrected" | dataType == "response") %>%
     mutate(sample_plate = sub("a", "", sample_plate)) %>%
     mutate(sample_plate = sub("b", "", sample_plate)) %>%
@@ -3436,7 +3461,7 @@ violinPlot <- ggplot(data = violinData, aes(x = sample_type_x, y = value, fill =
     notch = FALSE, alpha = 1, outlier.shape = NA,
     color = "grey30", fill = NA, center = TRUE, width = 0.25
   ) +
-  facet_wrap(facets = c("facet", "sample_type_x"), ncol = length(unique(violinData$sample_plate)), scales = "free_y") +
+  facet_wrap(facets = c("facet", "sample_type_x"), ncol = length(unique(violinData$sample_type_x)), scales = "free_y") +
   scale_fill_manual(values = c("sample" = "grey", "sampleCor" = "grey", "pqc" = "orchid", "pqcCor" = "orchid", "ltr" = "seagreen3", "ltrCor" = "seagreen3", "NA"=NA)) +
   scale_color_manual(values = c("sample" = "grey", "sampleCor" = "grey", "pqc" = "orchid", "pqcCor" = "orchid", "ltr" = "seagreen3", "ltrCor" = "seagreen3", "NA"=NA)) +
   scale_y_continuous(labels = scales::label_scientific()) +
@@ -3501,17 +3526,17 @@ pcaMod <- ropls::opls(
   )
 
 
-plotData = bind_cols(
+plotDataALL = bind_cols(
   pcaMod@scoreMN %>% as_tibble(), 
   Y %>% as_tibble() %>% rename("sample_type" = value),
   plate %>% as_tibble() %>% rename("sample_plate" = value)
 )
 
 
-plot.PCA <- ggplot(data = plotData, aes(x=p1, y=p2, fill = sample_type, shape = sample_type, color = sample_type)) +
-  geom_point(data = plotData %>% filter(sample_type == "sample"), size = 1.5) +
-  geom_point(data = plotData %>% filter(sample_type == "ltr"), size = 2.5) +
-  geom_point(data = plotData %>% filter(sample_type == "pqc"), size = 2.5) +
+plot.PCA <- ggplot(data = plotDataALL, aes(x=p1, y=p2, fill = sample_type, shape = sample_type, color = sample_type)) +
+  geom_point(data = plotDataALL %>% filter(sample_type == "sample"), size = 1.5) +
+  geom_point(data = plotDataALL %>% filter(sample_type == "ltr"), size = 2.5) +
+  geom_point(data = plotDataALL %>% filter(sample_type == "pqc"), size = 2.5) +
   scale_shape_manual(values = c("sample" = 21, "pqc" = 23, "ltr" = 21)) +
   scale_color_manual(values = c("sample" = "black", "pqc" = "black", "ltr" = "black")) +
   scale_fill_manual(values = c("sample" = "white", "pqc" = "orchid", "ltr" = "seagreen3")) +
@@ -3530,10 +3555,10 @@ plot.PCA <- ggplot(data = plotData, aes(x=p1, y=p2, fill = sample_type, shape = 
     )
     );plot.PCA
 
-plot.PCA.Plate <- ggplot(data = plotData, aes(x=p1, y=p2, shape = sample_type, color = sample_type, fill = sample_plate)) +
-  geom_point(data = plotData %>% filter(sample_type == "sample"), size = 2) +
-  geom_point(data = plotData %>% filter(sample_type == "ltr"), size = 2.5) +
-  geom_point(data = plotData %>% filter(sample_type == "pqc"), size = 2.5) +
+plot.PCA.Plate <- ggplot(data = plotDataALL, aes(x=p1, y=p2, shape = sample_type, color = sample_type, fill = sample_plate)) +
+  geom_point(data = plotDataALL %>% filter(sample_type == "sample"), size = 2) +
+  geom_point(data = plotDataALL %>% filter(sample_type == "ltr"), size = 2.5) +
+  geom_point(data = plotDataALL %>% filter(sample_type == "pqc"), size = 2.5) +
   scale_shape_manual(values = c("sample" = 22, "pqc" = 24, "ltr" = 25)) +
   scale_color_manual(values = c("sample" = "grey", "pqc" = "black", "ltr" = "black")) +
   #scale_fill_manual(values = c("RARp003" = "white", "RARp004" = "orchid", "RARp005" = "seagreen3")) +
@@ -3581,24 +3606,29 @@ if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$
   
   dev.off()
   
-  
+```
+
+# exportData
+
+```{r}
   
 #export csv
   
-  exportData <- master_list$data$response$combat %>% bind_rows() %>%
+  exportData <- master_list$data$response$statTarget %>% bind_rows() %>%
     select(
       contains("sample"),
-      all_of((rsdPerformance %>% filter(rsd<30) %>% arrange(metabolite) %>% .$metabolite))
+      all_of((master_list$summary_tables[["rsdOut"]]$statTarget %>% filter(responseRSD<30) %>% arrange(newNames) %>% .$newNames))
     )
       
-      for(idx_metabolite in exportData %>% select(!contains("sample")) %>% names()){
-    name_from <- idx_metabolite
-    name_to <- master_list$templates$metaboliteNames$tidyName[which(master_list$templates$metaboliteNames$newNames==idx_metabolite)]
-    
-    exportData <- exportData %>%
-      rename_with(~name_to, all_of(name_from))
+for(idx_metabolite in exportData %>% select(!contains("sample")) %>% names()){
   
-  }
+  name_from <- idx_metabolite
+  name_to <- master_list$templates$metaboliteNames$tidyName[which(master_list$templates$metaboliteNames$newNames==idx_metabolite)]
+  
+  exportData <- exportData %>%
+    rename_with(~name_to, all_of(name_from))
+  
+}
   
   if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/csvExport/"))){
     dir.create(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/csvExport/"))
@@ -3606,7 +3636,11 @@ if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$
   
   write_csv(exportData,
             file =  paste0(
-                  master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/csvExport/", Sys.Date(), "_", master_list$project_details$project_name, "_MCX_AB_metaboliteDATA.csv"
+                  master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/csvExport/", Sys.Date(), "_", 
+                  master_list$project_details$user_name, "_",
+                  master_list$project_details$project_name, "_", 
+                  master_list$project_details$spe, "_",
+                  master_list$project_details$wash, "_metaboliteDATA.csv"
                 )
               )
 ```

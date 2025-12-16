@@ -1,0 +1,98 @@
+#set up objects lists for data storage
+master_list$data$response <- list()
+
+#reset table
+master_list$templates$metaboliteNames$matchedSilUsed <- NA; master_list$templates$metaboliteNames$silUsed_imputed <- NA; master_list$templates$metaboliteNames$silUsed_combat <- NA; master_list$templates$metaboliteNames$silUsed_statTarget <- NA; master_list$templates$metaboliteNames$silUsed <- NA; master_list$templates$metaboliteNames
+
+
+
+#master_list$templates$metaboliteNames[["silUsed"]] = NA
+
+idx_dataType = "imputed"
+for(idx_dataType in c("imputed", "combat", "statTarget")){
+  
+  master_list$data$response[[idx_dataType]] <- list()
+  
+  #first calculate response for matched internal standards
+  silList <- master_list$data$peakArea[[idx_dataType]] %>% 
+    bind_rows() %>%
+    select(contains("_sil")) %>%
+    names()
+  
+  #loopData 
+  loopData <- master_list$data$peakArea[[idx_dataType]] %>%
+    bind_rows()
+  
+  idx_sil = silList[1]
+  for(idx_sil in silList){
+    #print(idx_sil)
+    
+    #find target
+    loopTarget <- gsub("_sil.*", "", idx_sil) 
+    
+   
+    
+    if(length(which(names(loopData) == loopTarget)) == 1){
+      
+      #store SIL used  
+      master_list$templates$metaboliteNames[[paste0("silUsed_", idx_dataType)]][which(master_list$templates$metaboliteNames$newNames == loopTarget)] <- 
+        master_list$templates$metaboliteNames$oldNames[which(master_list$templates$metaboliteNames$newNames ==  idx_sil)]
+      
+      
+      #turn matchedSilused to TRUE
+      master_list$templates$metaboliteNames$matchedSilUsed[which(master_list$templates$metaboliteNames$newNames == loopTarget)] <- 
+        TRUE
+      
+
+  for(idx_plate in names(master_list$data$peakArea[[idx_dataType]])){
+    
+    master_list$data$response[[idx_dataType]][[idx_plate]] <- master_list$data$peakArea[[idx_dataType]][[idx_plate]] %>% 
+      select(contains("sample")) 
+    
+    #change data source
+    master_list$data$response[[idx_dataType]][[idx_plate]]$sample_data_source <- "imputeResponse"
+    
+    #set loop data
+    loopData <- master_list$data$peakArea[[idx_dataType]][[idx_plate]]
+    
+    #get metabolte target data
+    loopTargetData <- loopData[[loopTarget]]
+    
+    #getSil data
+    loopSilData <- loopData[[idx_sil]]
+    
+    #create response
+    loopResponse <- tibble(
+      loopResponse = loopTargetData/loopSilData
+    ) %>% rename_with(~loopTarget)
+    
+    #store data
+    master_list$data$response[[idx_dataType]][[idx_plate]] <- master_list$data$response[[idx_dataType]][[idx_plate]] %>%
+      bind_cols(
+        loopResponse
+      )
+        
+        
+      } #idxPlate
+      
+    } #if
+    
+     } #idx_sil
+
+} #idx_dataType 
+
+master_list$templates$metaboliteNames
+
+  
+# ---------------------------------------
+
+
+
+
+#-------------------------------------
+  
+  
+
+
+
+
