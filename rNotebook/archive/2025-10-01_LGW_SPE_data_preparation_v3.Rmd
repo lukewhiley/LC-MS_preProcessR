@@ -1,0 +1,3675 @@
+---
+title: "SPE data Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+R markdown notebook for universal data processing of the SPE work. All of the chunks have explanatory text. Please take care to read this information as you work through the notebook.
+
+
+
+# Project set-up
+
+To set up the project please use the following template
+
+\~[path]/[projectID]/ - *IMPORTANT NOTE - THIS WILL NOT WORK IF THE PATH LENGTH IS > 260 CHARACTERS (WINDOWS)*
+
+------------------------------------------------------------------------
+
+\~[path]/[projectID]/AB/ \~[path]/[projectID]/AB/data/mzML - *(copy all AB mzML to this directory)*
+
+------------------------------------------------------------------------
+
+\~[path]/[projectID]/N/
+
+\~[path]/[projectID]/N/data/mzML - *(copy all N mzML to this directory)*
+
+------------------------------------------------------------------------
+
+\~[path]/[projectID]/msMethods - *(copy both the AB and N ms method (.exp) directly from the waters instrument into this directory)*
+
+------------------------------------------------------------------------
+
+
+
+## Load packages and set-up master list
+
+------------------------------------------------------------------------
+
+*USER INPUT REQUIRED*
+
+------------------------------------------------------------------------
+
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+#load packages
+package_list <- c('statTarget', 'svDialogs', 'ggpubr', 'janitor', 'mzR', 'cowplot', 'tidyverse', 'fedmatch','sva', 'gghalves')
+
+for(idx_package in package_list){
+  if(length(which(row.names(installed.packages()) == idx_package)) > 0){
+    suppressMessages(require(package = idx_package,
+                             character.only = TRUE))
+  } else {
+    svDialogs::dlg_message(
+      paste0("the package ", idx_package, " is not installed. Please install ", idx_package, " before continuing.")
+    )
+  }
+}
+
+```
+
+
+```{r}
+
+#set up project master list
+master_list <- list(); master_list$environment <- list(); master_list$environment$user_functions <- list(); master_list$templates <- list(); master_list$templates$mrm_guides <- list(); master_list$project_details <- list();    master_list$data <- list(); master_list$data$mzR <- list(); master_list$summary_tables <- list(); master_list$process_lists <- list(); master_list$plots <- list(); master_list$plots$chromatogram <- list()
+
+#store environment details
+master_list$environment$r_version <- sessionInfo()$R.version$version.string
+master_list$environment$base_packages <- sessionInfo()$basePkgs
+master_list$environment$user_packages <- paste0(names(sessionInfo()$otherPkgs), ": ", paste0(installed.packages()[names(sessionInfo()$otherPkgs), "Version"]))
+
+#######USER INPUT#############
+
+#create project folder structure and normalise path
+svDialogs::dlg_message("select project directory [~PATH/PROJECT_ID/"); master_list$project_details$project_dir <-  rstudioapi::selectDirectory(); master_list$project_details$project_dir <- normalizePath(master_list$project_details$project_dir, winslash = "/")
+#set SPE type
+master_list$project_details$spe <- svDialogs::dlg_input("is this project MCX or MAX?", "MCX/MAX")$res
+#set wash type
+master_list$project_details$wash <- svDialogs::dlg_input("is this project AB or N?", "AB/N")$res
+#set user
+master_list$project_details$user_name <- svDialogs::dlg_input("user initials: ", "")$res
+#set project name
+master_list$project_details$project_name <-  svDialogs::dlg_input("project name: ", "")$res
+
+#set filePath
+filePath <- paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash,"/data/mzml")
+
+```
+
+
+
+## use r to organise mzml into subplates
+
+```{r}
+
+svDialogs::dlg_message(paste0("set up mzml folder in project directory as follows:  " , gsub(".*/", "~/", master_list$project_details$project_dir), "/", master_list$project_details$wash, "/data/mzml")); 
+svDialogs::dlg_message("copy all mzmls into this folder, do not sort into subfolders");
+svDialogs::dlg_message("NOTE THIS SCRIPT WILL NOT WORK ON WINDOWS IF PATH LENGTH IS >260 CHARACTERS")
+#set filePath
+filePath <- paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash,"/data/mzml")
+
+#first move mzML into individual plates
+fileList <- list.files(filePath, pattern = ".mzML", recursive = FALSE, full.names = TRUE)
+svDialogs::dlg_message(paste0("there are ", length(fileList), " mzml files"))
+
+if(length(fileList) > 0){
+
+pathLength = nchar(fileList[1])
+svDialogs::dlg_message(paste0("Your path length is: ", pathLength))
+
+
+if(pathLength >= 240){
+  svDialogs::dlg_message(paste0("Your path length is approaching the Windows maximum of 260. If you are on Windows it will fail. Move project to a shorter length directory"))
+}
+
+if(pathLength < 240){
+  svDialogs::dlg_message(paste0("Your path length looks OK and is shorter than the Windows maximum of 260."))
+}
+
+#only perform the following steps if there are mzMLs in the folder
+if(length(fileList) > 0 & pathLength < 240){
+  
+#sort files into plate subfolders
+plateList <-  fileList %>% gsub(".*SS", "SS", .) %>% gsub(".*p0", "p0", .) %>% gsub("_.*", "", .) %>% unique()
+
+idxPlate = plateList[1]
+for(idxPlate in plateList){
+  plateMZML <- fileList[grepl(idxPlate, fileList)]
+
+  if(!dir.exists(paste0(filePath, "/", idxPlate))){
+    dir.create(paste0(filePath, "/", idxPlate))
+  }#if loop
+
+  idxMZML = plateMZML[1]
+  for(idxMZML in plateMZML){
+
+  file.rename(
+    from = idxMZML,
+    to = sub("data/mzml/", paste0("data/mzml/", idxPlate, "/"), idxMZML)
+  )
+
+  } #for idxMZML
+
+}#for idxPlate
+
+} #if length mzML > 0
+
+updatedFileList <- list.files(filePath, pattern = ".mzML", recursive = TRUE, full.names = TRUE); updatedFileList <- updatedFileList[!grepl("archive",updatedFileList)]; #length(updatedFileList)
+plateList <- gsub(".*p0", "p0", updatedFileList) %>% gsub("_.*", "", .) %>% unique()
+
+svDialogs::dlg_message(paste0("there are ", length(updatedFileList), " mzml files in ", length(plateList), " plates"))
+
+
+#get list of dirs
+dirPath <- list.dirs(filePath)
+dirPath <- dirPath[!grepl("(?i)archive", dirPath)]
+dirPath <- dirPath[-which(dirPath %in% filePath)]
+
+#organise into sub-plates (a and b)
+idxDir = dirPath[1] #for loop testing
+for(idxDir in dirPath){
+ 
+   #only run next code if parent plates remain (i.e. it hasn't been sorted into a and b sub plates yet
+  if(gsub(".*/", "", idxDir) %in% plateList){
+
+#get list of filenames
+fileName <-
+  tibble(
+    oldName = list.files(path = idxDir,
+                         pattern = "(.?)mzML")
+  )
+
+#append injection number
+fileName <- fileName %>%
+  add_column(
+    numbers = gsub(".*_", "", fileName$oldName) %>% gsub("\\..*", "", .)
+  )
+
+#remove rerun tag
+fileName$numbers <- gsub("-.*", "", fileName$numbers)
+
+#add 00
+for(idx in 1:length(fileName$numbers)){
+  if(nchar(fileName$numbers[idx]) ==1){fileName$numbers[idx] <- paste0("00", fileName$numbers[idx])}
+  if(nchar(fileName$numbers[idx]) ==2){fileName$numbers[idx] <- paste0("0", fileName$numbers[idx])}
+}
+
+fileName[["newName"]] <- paste0(fileName$numbers, "_", fileName$oldName)
+
+#run for loop to rename
+for(idxName in fileName$oldName){
+  file.rename(
+    from=paste0(idxDir, "/", idxName),
+    to=paste0(idxDir, "/", fileName$newName[which(fileName$oldName==idxName)])
+  )
+}
+
+#sort file name by newName
+fileName <- fileName %>% arrange(newName)
+
+#identify the check solutions
+checkFileName <- fileName %>%
+  filter(grepl("(?i)check", oldName)) %>%
+  arrange(newName)
+
+#find check index
+checkIdx <- which(fileName$newName %in% checkFileName$newName)
+
+  #set up plate a
+  dir.create(paste0(idxDir, "a"))
+
+  #move files from parent folder to folder a
+  for(idxName in fileName$newName[1:checkIdx[2]]){
+    file.rename(
+      from=paste0(idxDir, "/", idxName),
+      to=paste0(idxDir, "a/", idxName)
+    )
+  }
+
+  if(length(checkIdx) == 3){
+    #set up plate b
+    dir.create(paste0(idxDir, "b"))
+
+    #move files from parent folder to folder b
+    for(idxName in fileName$newName[(checkIdx[2]+1):nrow(fileName)]){
+      file.rename(
+        from=paste0(idxDir, "/", idxName),
+        to=paste0(idxDir, "b/", idxName)
+      )
+    }
+
+    #copy the mid check file so both a and b have a copy
+    file.copy(
+      from=paste0(idxDir, "a/", checkFileName$newName[2]),
+      to=paste0(idxDir, "b/", checkFileName$newName[2])
+    )
+  }
+
+  #tidy up and remove original folder
+  #unlink(idxDir, recursive=TRUE)
+
+  }
+}
+}
+
+svDialogs::dlg_message("check folders. If all ahs worked correctly delete the original folders (without the a or b sub-tag)")
+
+
+
+```
+
+## peform directory check
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+updatedFileList <- list.files(filePath, pattern = ".mzML", recursive = TRUE, full.names = TRUE); updatedFileList <- updatedFileList[!grepl("archive",updatedFileList)]; length(updatedFileList)
+
+#get list of dirs
+dirPath <- list.dirs(filePath)
+dirPath <- dirPath[!grepl("(?i)archive", dirPath)]
+dirPath <- dirPath[-which(dirPath %in% filePath)]
+
+svDialogs::dlg_message(paste0("there are ", length(updatedFileList), " mzml files in ", length(dirPath), " sub-plates (a/b): ", paste0(gsub(".*/", "", dirPath), collapse = "; ")))
+
+svDialogs::dlg_message(paste0("if this is incorrect, finalise subfoders and rerun this chunk"))
+
+```
+
+
+## read in templates
+
+## prepare mrm method list from a msFile text export
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+
+#method copy
+svDialogs::dlg_message(paste0("copy the AB and N .exp methods used into a project methods folder: ", gsub(".*/", "~/", master_list$project_details$project_dir), "/msMethods"))
+
+
+listMethods <- list.files(path = paste0(master_list$project_details$project_dir, '/msMethods/'), pattern = ".exp", full.names = TRUE)
+methodPath <- listMethods[grepl(paste0("_",master_list$project_details$wash,"_"), listMethods)]
+
+#read in delim ms method data from a waters .exp file
+msDataMethod <- read.table(
+  file = methodPath,
+  header = FALSE, 
+  sep = " ", 
+  col.names = paste0("V",seq_len(20)), 
+  fill = TRUE) %>% 
+  as_tibble() %>%
+  add_column(
+    idx = c(1:nrow(.)),
+    .before = 1
+  )
+
+#extract function list
+functionList <- bind_cols(
+  msDataMethod %>% filter(grepl("FUNCTION", V1)) %>% unite(mrmFunction, V1, V2) %>% select(idx, mrmFunction),
+  tibble(
+    method = msDataMethod %>% filter(grepl("(?i)CompoundName_1", V1)) %>% .$V1 %>% gsub(".*\\,", "", .),
+    experiment = msDataMethod %>% filter(grepl("(?i)CompoundName_1", V1)) %>% .$V2, #%>% gsub(".*,", " ", .),
+    metabolite = msDataMethod %>% filter(grepl("(?i)CompoundName_1", V1)) %>% .$V3 %>% gsub("\\..*", "", .),
+    #metabolite = msDataMethod %>% filter(grepl("(?i)CompoundName_1", V1)) %>%  
+    #   mutate(V2 = gsub(",", "-", V2)) %>%
+    #   mutate(V1 = gsub(".*,", "_ _,", V1)) %>%
+    #   paste0("_1_", .$V1, "_2_", .$V2, "_3_") %>%
+    #   sub(".*,", "", .) %>%
+    #   sub("_2__3_", "", .),
+    rtStart = msDataMethod %>% filter(grepl("(?i)FunctionStartTime", V1)) %>% .$V1 %>% gsub(".*,", "", .),
+    rtEnd = msDataMethod %>% filter(grepl("(?i)FunctionEndTime", V1)) %>% .$V1 %>% gsub(".*,", "", .),
+    polarity = msDataMethod %>% filter(grepl("(?i)FunctionPolarity", V1)) %>% .$V1 %>% gsub(".*,", "", .),
+    mrm1_q1 = msDataMethod %>% filter(grepl("(?i)SIRMass1", V1)) %>% .$V1 %>% gsub(".*,", "", .) %>% as.numeric(),
+    mrm1_q3 = msDataMethod %>% filter(grepl("(?i)SIRMass_2_1", V1)) %>% .$V1 %>% gsub(".*,", "", .) %>% as.numeric(),
+    mrm1_ce = msDataMethod %>% filter(grepl("(?i)collisionenergy\\(V\\)_1", V1)) %>% .$V1 %>% gsub(".*,", "", .) %>% as.numeric(),
+    mrm2_q1 = NA,
+    mrm2_q3 = NA,
+    mrm2_ce = NA,
+    mrm3_q1 = NA,
+    mrm3_q3 = NA,
+    mrm3_ce = NA
+  )
+) %>% 
+  # create experiment channel
+  #add_column(
+   # .before = "metabolite",
+  #  experiment = sub("_2_.*", "", .$metabolite)
+  #) %>%
+  mutate(metabolite = sub(".*_2_", "", metabolite)) %>%
+  mutate(metabolite = sub("_3_.*", "", metabolite)) %>%
+  mutate(experiment = sub("_3_.*", "", experiment)) %>%
+  mutate(experiment = sub(".*-QC", "QC", experiment)) %>%
+  mutate(metabolite = sub("-QC", "", metabolite)) %>%
+  mutate(experiment = sub("_EXP", "", experiment)) %>%
+  mutate(experiment = sub("\\(.*", "", experiment)) %>%
+  mutate(experiment = sub("Pphen", "PPHEN", experiment)) %>%
+  mutate(experiment = sub("PPh", "PPHEN", experiment)) %>%
+  mutate(experiment = sub("Pphen", "PPHEN", experiment))
+  
+
+#create indole experiment
+functionList$experiment[which(functionList$metabolite == "IBA")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "ICA")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "ICARB")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "I3AA")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "I3AA-SIL_d4")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "IAAEE")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "IAAME")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "IACA")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "IACR")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "ILA")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "IET")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "5-HIAA")] <- "INDOLE"
+functionList$experiment[which(functionList$metabolite == "5-HIAA-SIL_d5")] <- "INDOLE"
+
+
+#tidy up method file by adding blank space as experiment where extraction of info has an error
+for(idx_metabolite in functionList$metabolite){
+  functionList[["experiment"]][which(functionList[["experiment"]]==idx_metabolite)] <- ""
+}
+
+#add experiment type for each SIL
+for(idx_sil in functionList$metabolite[grepl("-SIL", functionList$metabolite)]){
+  experiment <- functionList[["experiment"]][which(functionList[["metabolite"]]==gsub("-SIL.*","",idx_sil))]
+  if(length(experiment) ==1){
+    functionList[["experiment"]][which(functionList[["metabolite"]]==idx_sil)] <- experiment
+  }
+}
+
+
+#add Q2 and Q3 (missmatch in length so can't do simple string extract)
+idxStart = functionList$idx[1]
+for(idxStart in functionList$idx){
+  
+  #find end index of function data
+  idxEnd <- functionList$idx[which(functionList$idx == idxStart)+1]
+  
+  #extract data specific for function
+  msDataLoop <- msDataMethod %>%
+    filter(idx >= idxStart & idx <= idxEnd)
+  
+  #extract mrm2/mrm3 data
+  mrm2_q1 <- msDataLoop %>% filter(grepl("(?i)SIRMass2", V1)) %>% .$V1 %>% gsub(".*,", "", .) %>% as.numeric()
+  mrm2_q3 <- msDataLoop %>% filter(grepl("(?i)SIRMass_2_2", V1)) %>% .$V1 %>% gsub(".*,", "", .) %>% as.numeric()
+  mrm2_ce <- msDataLoop %>% filter(grepl("(?i)collisionenergy\\(V\\)_2", V1)) %>% .$V1 %>% gsub(".*,", "", .) %>% as.numeric()
+  mrm3_q1 <- msDataLoop %>% filter(grepl("(?i)SIRMass3", V1)) %>% .$V1 %>% gsub(".*,", "", .) %>% as.numeric()
+  mrm3_q3 <- msDataLoop %>% filter(grepl("(?i)SIRMass_2_3", V1)) %>% .$V1 %>% gsub(".*,", "", .) %>% as.numeric()
+  mrm3_ce <- msDataLoop %>% filter(grepl("(?i)collisionenergy\\(V\\)_3", V1)) %>% .$V1 %>% gsub(".*,", "", .) %>% as.numeric()
+  
+  #fill columns
+  if(length(mrm2_q1)==1){functionList$mrm2_q1[which(functionList$idx == idxStart)] <- mrm2_q1}
+  if(length(mrm2_q3)==1){functionList$mrm2_q3[which(functionList$idx == idxStart)] <- mrm2_q3}
+  if(length(mrm2_ce)==1){functionList$mrm2_ce[which(functionList$idx == idxStart)] <- mrm2_ce}
+  if(length(mrm3_q1)==1){functionList$mrm3_q1[which(functionList$idx == idxStart)] <- mrm3_q1}
+  if(length(mrm3_q3)==1){functionList$mrm3_q3[which(functionList$idx == idxStart)] <- mrm3_q3}
+  if(length(mrm3_ce)==1){functionList$mrm3_ce[which(functionList$idx == idxStart)] <- mrm3_ce}
+}
+
+
+#trim method if running control charts to only matched SILs
+
+functionListMethod <- "CCC/fullAnalysis"
+
+while(functionListMethod != "CCC" & functionListMethod != "fullAnalysis"){
+functionListMethod <- svDialogs::dlg_input(message = paste0("are you running a controlChartCheck or a full project analysis?"), default = paste0("CCC/fullAnalysis"))$res
+}
+
+if(functionListMethod == "CCC"){
+  
+  methodSil <- functionList$metabolite[grepl("-SIL", functionList$metabolite)]
+  matchedSil <- methodSil %>% gsub("-SIL.*", "", .)
+  matchedSil <- functionList$metabolite[functionList$metabolite %in% matchedSil]
+  
+  nList <- c(
+     "5-HIAA", "5-HIAA-SIL_d5", "CDCA", "CDCA-SIL_d4", "GCDCA", "GCDCA-SIL_d4", "GUDCA", "GUDCA-SIL_d4", 
+    "XA", "XA-SIL_d4", "12\\(R\\)-HETE", "12\\(R\\)-HETE-SIL_d8",  "15\\(S\\)-HETE","15\\(S\\)-HETE-SIL_d8", "8i-PGF2a", "8i-PGF2a-SIL_d4"
+    )
+  
+  abList <- c(
+    "3-HAA", "3-HAA-SIL_D3", "CAR\\(2:0\\)", "CAR\\(2:0\\)-SIL_d3", "CAR\\(4\\:0\\)", "CAR\\(4\\:0\\)-SIL_d3", "CAR\\(i5\\:0\\)", "CAR\\(i5\\:0\\)-SIL_d9", "KYN", "KYN-SIL_D4", "NEO", "NEO-SIL_13C5", "TRYP", "TRYP-SIL_d5", "SER", "SER-SIL_d4"
+  )
+  
+functionList <- functionList %>%
+  filter(metabolite %in% c(methodSil, matchedSil))
+
+  if(master_list$project_details$wash[1] == "N"){
+    functionList <- functionList %>%
+    filter(grepl(paste0("^(", paste(nList, collapse = "|"), ")$"), metabolite))
+  }
+
+ if(master_list$project_details$wash[1] == "AB"){
+    functionList <- functionList %>%
+    filter(grepl(paste0("^(", paste(abList, collapse = "|"), ")$"), metabolite))
+  }
+
+}
+
+
+
+```
+
+## review mrm method
+
+This section offers the user the opportunity to review the MS method to make sure the conversion from the .exp file has worked appropiately. Please review the method and make any changes to the metabolite and experiment columns.
+
+```{r}
+
+#export method
+write_csv(functionList,
+          paste0(master_list$project_details$project_dir,
+                 "/msMethods/",
+                 Sys.Date(),
+                 "_", master_list$project_details$wash,
+                 "_method_forReview.csv"
+          ))
+
+
+svDialogs::dlg_message("now review method for errors (save in method subfolder)")
+
+svDialogs::dlg_message(paste0("review method, make any ad-hoc edits in the experiment and metabolite columns, then rename to _method_reviewed_", master_list$project_details$user_name, ".csv"))
+
+
+methodUpdateFile = list.files(
+  path = paste0(master_list$project_details$project_dir,"/msMethods/"), 
+  pattern = paste0("_", master_list$project_details$wash, "_method_reviewed_")
+  )
+
+svDialogs::dlg_message(paste0("is this your reviewed file ....................................................................... ", 
+                              methodUpdateFile, " ..... ...... ............ ................... .......... ........... .......... ............ .......... ..................... ......... .......... if not rerun chunk and edit name of file. move old files to archive folder."))
+
+
+
+#store in masterlist
+master_list$templates[['msMethod']] <- read_csv(
+  paste0(master_list$project_details$project_dir,
+                 "/msMethods/",
+                 methodUpdateFile
+  )
+)
+
+svDialogs::dlg_message("if you notice any method errors in experiments/metabolite names columns - update method version on the instrument before next project")
+
+```
+
+## mrm method pivot_longer
+
+```{r}
+
+#mke long table
+master_list$templates[['msMethodLong']] <- left_join(
+  by="rowIdx",
+  master_list$templates[['msMethod']] %>%
+    select(idx, mrmFunction, metabolite, rtStart, rtEnd, polarity, mrm1_q1, mrm2_q1, mrm3_q1) %>%
+    pivot_longer(cols = c(mrm1_q1, mrm2_q1, mrm3_q1), 
+                 names_to = "mrm",
+                 values_to = "q1") %>%
+    add_column(rowIdx = (1:nrow(.)), .before = 1),
+  master_list$templates[['msMethod']] %>%
+    select(idx, mrm1_q3, mrm2_q3, mrm3_q3) %>%
+    pivot_longer(cols = c(mrm1_q3, mrm2_q3, mrm3_q3), 
+                 names_to = "mrm",
+                 values_to = "q3") %>%
+    add_column(rowIdx = (1:nrow(.)), .before = 1) %>%
+    select(-mrm, -idx),
+)
+  
+#tidy up mrm column
+master_list$templates[['msMethodLong']]$mrm <- gsub("_.*", "", master_list$templates[['msMethodLong']]$mrm)
+
+#remove NA mrms
+master_list$templates[['msMethodLong']] <- master_list$templates[['msMethodLong']][-intersect(which(is.na(master_list$templates[['msMethodLong']]$q1)), which(is.na(master_list$templates[['msMethodLong']]$q3))),]
+
+
+```
+
+## create list of plates for analysis
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+############
+#create plate list 
+#set filePath
+filePath <- paste(sep="/", master_list$project_details$project_dir,  master_list$project_details$wash, "data/mzml")
+
+#get list of dirs
+dirPath <- list.dirs(filePath)
+dirPath <- dirPath[!grepl("(?i)archive", dirPath)]
+dirPath <- dirPath[-which(dirPath %in% filePath)]
+
+#store in masterList
+master_list$project_details$plateDirList <- dirPath
+
+#get plate list
+master_list$project_details$plateList <- gsub(".*\\/", "", master_list$project_details$plateDirList)
+
+svDialogs::dlg_message(paste0("plates for processing: ", paste0(collapse = "; ", master_list$project_details$plateList)))
+
+```
+
+## list mzml
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+# PROCESS: create list of mzML FILES USING mzR ------------------------------------
+#idx_plate = master_list$project_details$plateList[1] #for testing loop
+for(idx_plate in master_list$project_details$plateList){
+  
+  #create empty list for storing mzR objects
+  master_list$data$mzR[[idx_plate]] <- list()
+  
+  #get list of mzMl files
+  master_list$data$mzR[[idx_plate]] <- list.files(
+    pattern = "(?i).mzml",
+    paste0(
+      master_list$project_details$plateDirList[grepl(idx_plate, master_list$project_details$plateDirList)]
+      )    
+    )
+
+  #remove conditioning runs
+master_list$data$mzR[[idx_plate]] <- master_list$data$mzR[[idx_plate]][!grepl("(?i)cond", master_list$data$mzR[[idx_plate]])]
+}
+  
+```
+
+## Find peak boundaries for targets
+
+identify peak boundaries using check solution as a reference. 
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+master_list$data$peakRegion <- list()
+#set object to temp store checkMzMLs
+checkMzml <- list()
+
+idx_plate = master_list$project_details$plateList[1] #for testing
+#for(idx_plate in master_list$project_details$plateList){
+for(idx_plate in master_list$project_details$plateList){
+  
+  print(idx_plate)
+  
+  #find index of check solution within idx_plate mzml directory
+  checkIndex <- master_list$data$mzR[[idx_plate]][grep("check", master_list$data$mzR[[idx_plate]], ignore.case = TRUE)]
+  
+  idx_mzML = checkIndex[1] #for testing loop
+  for(idx_mzML in checkIndex){
+    print(idx_mzML)
+    
+    #read in mzML
+    if(!gsub("(?i).mzml", "", idx_mzML) %in% names(checkMzml)){
+      #create mzR object
+      checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_object <- mzR::openMSfile(
+        filename = paste0(master_list$project_details$plateDirList[grepl(idx_plate, master_list$project_details$plateDirList)], "/", idx_mzML)
+      )
+      #create mzR header
+      checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_header <- mzR::chromatogramHeader(
+        checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_object) %>%
+        as_tibble() %>% 
+        #mutate to avoid low value decimal making error in the output
+        mutate(precursorIsolationWindowTargetMZ = round(precursorIsolationWindowTargetMZ, 4),
+               productIsolationWindowTargetMZ = round(productIsolationWindowTargetMZ, 4))
+      #create mzR chromatogram
+      checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_chromatogram <- mzR::chromatograms(
+        checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_object)
+    }
+    
+    
+    #cycle through each function to extract the chrom data
+    #for testing
+    idx_function = "FUNCTION_13"
+    
+    for(idx_function in unique(master_list$templates$msMethodLong %>% filter(!grepl("-SIL", metabolite)) %>% .$mrmFunction)){
+      
+       #get metabolite string
+       mrm_metabolite = master_list$templates$msMethodLong %>%
+           filter(mrmFunction == idx_function) %>%
+           .$metabolite %>%
+           unique()
+       
+       
+      #get chromatogram header data
+      mzmlFuncHeader <- checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_header %>%
+        filter(grepl(paste0(gsub("_","=", casefold(idx_function)), " "), chromatogramId))
+      
+      
+      #do a check in case the functions have been updated in the project and change between files
+      
+      if(FALSE %in% (c(
+          mzmlFuncHeader$precursorIsolationWindowTargetMZ %in% (master_list$templates$msMethodLong %>% filter(mrmFunction == idx_function) %>% .$q1 %>% unique()),
+          mzmlFuncHeader$productIsolationWindowTargetMZ %in% (master_list$templates$msMethodLong %>% filter(mrmFunction == idx_function) %>% .$q3 %>% unique())
+        ))){
+        
+        #update idx_function
+        idx_function = checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_header %>% 
+          filter(precursorIsolationWindowTargetMZ %in% (master_list$templates$msMethodLong %>% filter(mrmFunction == idx_function) %>% .$q1 %>% unique())) %>% 
+          filter(productIsolationWindowTargetMZ %in% (master_list$templates$msMethodLong %>% filter(mrmFunction == idx_function) %>% .$q3 %>% unique())) %>%
+          .$chromatogramId %>%
+          gsub(".*function=", "function=", . ) %>%
+          gsub(" .*", "", .) %>%
+          gsub("=", "_", .) %>% 
+          toupper() %>%
+          unique()
+        
+        #update header
+        mzmlFuncHeader <- checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_header %>%
+          filter(grepl(paste0(gsub("_","=", casefold(idx_function)), " "), chromatogramId))
+        
+        }
+      
+      
+     #set channel index (within msFunction) for storing later
+     channel_index = 1
+       
+      idx_mrm = mzmlFuncHeader$chromatogramIndex[1]#for testing
+      for(idx_mrm in mzmlFuncHeader$chromatogramIndex){
+      #get metabolite metadata   
+      row_index = which(mzmlFuncHeader$chromatogramIndex==idx_mrm)
+      #store mrm details
+      precursor_mz = mzmlFuncHeader$precursorIsolationWindowTargetMZ[row_index]
+      product_mz = mzmlFuncHeader$productIsolationWindowTargetMZ[row_index]
+      
+        #set empty object for storing peak boundaries
+      if(!mrm_metabolite %in% names(master_list$data$peakRegion)){
+        master_list$data$peakRegion[[mrm_metabolite]] <- list()
+      } 
+      
+      #set modifiable loop chromatogram
+      loopChromatogram <- checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_chromatogram[[idx_mrm]] %>%
+        as_tibble() %>%
+        add_column(.before = 1,
+          scanIndex = 1:nrow(.)
+        ) %>%
+        setNames(c("scanIndex", "time", "intensity"))
+      
+      #create peak table
+      peakTable = tibble()
+      #fl.count = 9
+      smoothData <- loopChromatogram %>%
+          select(scanIndex, time) %>%
+          add_column(
+          intensity = loopChromatogram$intensity %>%
+            pracma::savgol(fl = 7, forder = 0, dorder = 0) %>%
+            pracma::savgol(fl = 5, forder = 0, dorder = 0) %>%
+            pracma::savgol(fl = 3, forder = 0, dorder = 0)
+            ) 
+      
+      smoothData <- smoothData %>%
+        as.matrix() %>%
+        smoothr::smooth_chaikin(., wrap = FALSE) %>%
+        as_tibble() %>%
+        setNames(c("scanIndex", "time", "intensity"))
+
+        #reset baseline to help findPeaks
+        smoothData$intensity[which(smoothData$intensity < 
+                                     (sd(smoothData$intensity)*0.1))] <- min(smoothData$intensity)
+          #create peak table
+      peakTable <- smoothData[["intensity"]] %>%
+        pracma::findpeaks(x=., nups = 5, ndowns = 5,  minpeakdistance = 20, sortstr = TRUE, minpeakheight = sd(.)) %>%
+        as_tibble() %>% setNames(c("intensity", "peakApexIndex", "peakStartIndex", "peakEndIndex"))
+      
+      if(nrow(peakTable) == 0){
+        peakTable <- tibble(
+          intensity = max(smoothData$intensity),
+          peakApexIndex = which.max(smoothData$intensity),
+          peakStartIndex = which(smoothData$intensity > min(smoothData$intensity))[1],
+          peakEndIndex = rev(which(smoothData$intensity > min(smoothData$intensity)))[1]
+          )
+      }
+
+      #set index of which peak to use from peakDetect table
+      peakTableRow = 1
+      
+      #store peak details
+      peakApexInt <- peakTable[["intensity"]][peakTableRow]
+      peakApexIndex <- peakTable[["peakApexIndex"]][peakTableRow]; peakApexRT <- smoothData[["time"]][peakApexIndex]
+      peakStartIndex <- peakTable[["peakStartIndex"]][peakTableRow]; peakStartRT <- smoothData[["time"]][peakStartIndex]
+      peakEndIndex <- peakTable[["peakEndIndex"]][peakTableRow]; peakEndRT <- smoothData[["time"]][peakEndIndex]
+      peakWidth <- peakEndIndex-peakStartIndex
+      
+       #creat a tibble to define peak
+      master_list$data$peakRegion[[mrm_metabolite]] <- bind_rows(
+        master_list$data$peakRegion[[mrm_metabolite]],
+        tibble(
+          ms_function = idx_function,
+          ms_channel = channel_index,
+          ms_header_id = idx_mrm,
+          sampleMetabolite = mrm_metabolite,
+          mrm = paste0(round(precursor_mz,2), " > ", round(product_mz,2)),
+          precursor_mz = precursor_mz,
+          product_mz = product_mz,
+          samplePlate = idx_plate,
+          sampleName = idx_mzML,
+          peakApexInt = peakApexInt,
+          peakStartRT = peakStartRT,
+          peakApexRT = peakApexRT,
+          peakEndRT = peakEndRT,
+          peakStartIndex =peakStartIndex,
+          peakApexIndex = peakApexIndex,
+          peakEndIndex =peakEndIndex,
+          peakWidth = peakWidth,
+          #flCount = fl.count
+        )
+      )
+      
+      channel_index <- channel_index+1
+      
+       } #idx_mrm
+      
+    } #idx_function
+    
+  } #idx_mzML
+  
+} #idx_plate
+    
+    
+
+
+## finalise peak boundaries
+
+#identify Q and q ions and finalise boundaries per plate
+
+master_list$data$peakRegionFinal <- list()
+
+#idx_metabolite = names(master_list$data$peakRegion)[13]#for testing loop
+#idx_metabolite = "LTE4"
+for(idx_metabolite in names(master_list$data$peakRegion)){
+  print(idx_metabolite)
+  
+  master_list$data$peakRegionFinal[[idx_metabolite]] <- list()
+  
+  #first ID Q ion across plate
+    q_tibble <- list()
+    
+    idx_channel = unique(master_list$data$peakRegion[[idx_metabolite]]$ms_channel)[1]
+    for(idx_channel in unique(master_list$data$peakRegion[[idx_metabolite]]$ms_channel)){
+      mean_intensity = master_list$data$peakRegion[[idx_metabolite]] %>%
+        filter(ms_channel == idx_channel) %>%
+        .$peakApexInt %>%
+        median(na.rm = TRUE)
+      q_tibble <- bind_rows(
+        q_tibble,
+        tibble(
+          ms_channel = idx_channel,
+          mean_int = mean_intensity)
+      )
+    }
+  
+  #identify Q ion channel 
+  Q_ion <- q_tibble$ms_channel[which.max(q_tibble$mean_int)]
+  
+  master_list$data$peakRegion[[idx_metabolite]]$Q_q <- "q"
+  master_list$data$peakRegion[[idx_metabolite]]$Q_q[which(master_list$data$peakRegion[[idx_metabolite]]$ms_channel == Q_ion)] <- "Q"
+  
+  
+  #finalise peak bounday of Q ion
+  idx_plate = unique(master_list$data$peakRegion[[idx_metabolite]]$samplePlate)[1] #for testing loop
+  #for(idx_plate in unique(master_list$data$peakRegion[[idx_metabolite]]$samplePlate)[1]){ #for testing loop
+  for(idx_plate in unique(master_list$data$peakRegion[[idx_metabolite]]$samplePlate)){
+    print(idx_plate)
+    plate_data <- master_list$data$peakRegion[[idx_metabolite]] %>%
+      filter(samplePlate==idx_plate) %>%
+      filter(Q_q == "Q")
+    
+    master_list$data$peakRegionFinal[[idx_metabolite]] <- bind_rows(
+      master_list$data$peakRegionFinal[[idx_metabolite]],
+      tibble(
+        sample_plate = idx_plate,
+        ms_function = plate_data$ms_function %>% unique(),
+        ms_channel_Q = plate_data$ms_channel %>% unique(),
+        ms_header_id = plate_data$ms_header_id %>% unique(),
+        metabolite = idx_metabolite,
+        precursor_mz = plate_data$precursor_mz %>% unique() %>% round(2),
+        product_mz = plate_data$product_mz %>% unique() %>% round(2),
+        mrm = paste0(plate_data$precursor_mz %>% unique() %>% round(2), " > " , plate_data$product_mz %>% unique() %>% round(2)),
+        peakStartRT = (((plate_data$peakStartRT %>% min(na.rm = TRUE)) *100) %>% floor()) /100,
+        peakEndRT =  (((plate_data$peakEndRT %>% min(na.rm = TRUE)) *100) %>% ceiling()) /100,
+        peakApexRT = plate_data$peakApexRT %>% mean(na.rm = TRUE) %>% round(2),
+        peakStartIndex = plate_data$peakStartIndex %>% min(na.rm = TRUE) %>% round(2),
+        peakEndIndex = plate_data$peakEndIndex %>% max(na.rm = TRUE) %>% round(2)
+      )
+    )
+  
+  }#idx_plate
+}#idx_metabolite
+
+
+```
+
+
+## Find peak boundaries for SIL IS
+
+identify peak boundaries using LTR as a reference as internal standards not in check solution. 
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+master_list$data$peakRegionSIL <- list()
+#set object to temp store checkMzMLs
+checkMzml <- list()
+
+idx_plate = master_list$project_details$plateList[1] #for testing
+#for(idx_plate in master_list$project_details$plateList){
+for(idx_plate in master_list$project_details$plateList){
+  
+  #find index of check solution within idx_plate mzml directory
+  checkIndex <- master_list$data$mzR[[idx_plate]][grep("vLTR", master_list$data$mzR[[idx_plate]], ignore.case = TRUE)]
+  
+  idx_mzML = checkIndex[1] #for testing loop
+  for(idx_mzML in checkIndex){
+    
+    #read in mzML
+    if(!gsub("(?i).mzml", "", idx_mzML) %in% names(checkMzml)){
+      #create mzR object
+      checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_object <- mzR::openMSfile(
+        filename = paste0(master_list$project_details$plateDirList[grepl(idx_plate, master_list$project_details$plateDirList)], "/", idx_mzML)
+      )
+      #create mzR header
+      checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_header <- mzR::chromatogramHeader(
+        checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_object) %>%
+        as_tibble() %>% 
+        #mutate to avoid low value decimal making error in the output
+        mutate(precursorIsolationWindowTargetMZ = round(precursorIsolationWindowTargetMZ, 4),
+               productIsolationWindowTargetMZ = round(productIsolationWindowTargetMZ, 4))
+      #create mzR chromatogram
+      checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_chromatogram <- mzR::chromatograms(
+        checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_object)
+    }
+    
+    
+    #cycle through each function to extract the chrom data
+    #for testing
+    idx_function = "FUNCTION_15"
+    
+    for(idx_function in unique(master_list$templates$msMethodLong %>% filter(grepl("SIL", metabolite)) %>% .$mrmFunction)){
+      
+       #get metabolite string
+       mrm_metabolite = master_list$templates$msMethodLong %>%
+           filter(mrmFunction == idx_function) %>%
+           .$metabolite %>%
+           unique()
+       
+       
+      #get chromatogram header data
+      mzmlFuncHeader <- checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_header %>%
+        filter(grepl(paste0(gsub("_","=", casefold(idx_function)), " "), chromatogramId))
+      
+      
+      #do a check in case the functions have been updated in the project and change between files
+      
+      if(FALSE %in% (c(
+          mzmlFuncHeader$precursorIsolationWindowTargetMZ %in% (master_list$templates$msMethodLong %>% filter(mrmFunction == idx_function) %>% .$q1 %>% unique()),
+          mzmlFuncHeader$productIsolationWindowTargetMZ %in% (master_list$templates$msMethodLong %>% filter(mrmFunction == idx_function) %>% .$q3 %>% unique())
+        ))){
+        
+        #update idx_function
+        idx_function = checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_header %>% 
+          filter(precursorIsolationWindowTargetMZ %in% (master_list$templates$msMethodLong %>% filter(mrmFunction == idx_function) %>% .$q1 %>% unique())) %>% 
+          filter(productIsolationWindowTargetMZ %in% (master_list$templates$msMethodLong %>% filter(mrmFunction == idx_function) %>% .$q3 %>% unique())) %>%
+          .$chromatogramId %>%
+          gsub(".*function=", "function=", . ) %>%
+          gsub(" .*", "", .) %>%
+          gsub("=", "_", .) %>% 
+          toupper() %>%
+          unique()
+        
+        #update header
+        mzmlFuncHeader <- checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_header %>%
+          filter(grepl(paste0(gsub("_","=", casefold(idx_function)), " "), chromatogramId))
+        
+        }
+      
+      
+     #set channel index (within msFunction) for storing later
+     channel_index = 1
+       
+      idx_mrm = mzmlFuncHeader$chromatogramIndex[1]#for testing
+      for(idx_mrm in mzmlFuncHeader$chromatogramIndex){
+      #get metabolite metadata   
+      row_index = which(mzmlFuncHeader$chromatogramIndex==idx_mrm)
+      #store mrm details
+      precursor_mz = mzmlFuncHeader$precursorIsolationWindowTargetMZ[row_index]
+      product_mz = mzmlFuncHeader$productIsolationWindowTargetMZ[row_index]
+      
+        #set empty object for storing peak boundaries
+      if(!mrm_metabolite %in% names(master_list$data$peakRegionSIL)){
+        master_list$data$peakRegionSIL[[mrm_metabolite]] <- list()
+      } 
+      
+      #set modifiable loop chromatogram
+      loopChromatogram <- checkMzml[[gsub("(?i).mzml", "", idx_mzML)]]$mzR_chromatogram[[idx_mrm]] %>%
+        as_tibble() %>%
+        add_column(.before = 1,
+          scanIndex = 1:nrow(.)
+        ) %>%
+        setNames(c("scanIndex", "time", "intensity"))
+      
+      #create peak table
+      peakTable = tibble()
+      #fl.count = 9
+      smoothData <- loopChromatogram %>%
+          select(scanIndex, time) %>%
+          add_column(
+          intensity = loopChromatogram$intensity %>%
+            pracma::savgol(fl = 7, forder = 0, dorder = 0) %>%
+            pracma::savgol(fl = 5, forder = 0, dorder = 0) %>%
+            pracma::savgol(fl = 3, forder = 0, dorder = 0)
+            ) 
+      
+      smoothData <- smoothData %>%
+        as.matrix() %>%
+        smoothr::smooth_chaikin(., wrap = FALSE) %>%
+        as_tibble() %>%
+        setNames(c("scanIndex", "time", "intensity"))
+
+        #reset baseline to help findPeaks
+        smoothData$intensity[which(smoothData$intensity < 
+                                     (sd(smoothData$intensity)*0.1))] <- min(smoothData$intensity)
+          #create peak table
+      peakTable <- smoothData[["intensity"]] %>%
+        pracma::findpeaks(x=., nups = 5, ndowns = 5,  minpeakdistance = 20, sortstr = TRUE, minpeakheight = sd(.)) %>%
+        as_tibble() %>% setNames(c("intensity", "peakApexIndex", "peakStartIndex", "peakEndIndex"))
+      
+      if(nrow(peakTable) == 0){
+        peakTable <- tibble(
+          intensity = max(smoothData$intensity),
+          peakApexIndex = which.max(smoothData$intensity),
+          peakStartIndex = which(smoothData$intensity > min(smoothData$intensity))[1],
+          peakEndIndex = rev(which(smoothData$intensity > min(smoothData$intensity)))[1]
+          )
+      }
+
+      #set index of which peak to use from peakDetect table
+      peakTableRow = 1
+      
+      #store peak details
+      peakApexInt <- peakTable[["intensity"]][peakTableRow]
+      peakApexIndex <- peakTable[["peakApexIndex"]][peakTableRow]; peakApexRT <- smoothData[["time"]][peakApexIndex]
+      peakStartIndex <- peakTable[["peakStartIndex"]][peakTableRow]; peakStartRT <- smoothData[["time"]][peakStartIndex]
+      peakEndIndex <- peakTable[["peakEndIndex"]][peakTableRow]; peakEndRT <- smoothData[["time"]][peakEndIndex]
+      peakWidth <- peakEndIndex-peakStartIndex
+      
+       #creat a tibble to define peak
+      master_list$data$peakRegionSIL[[mrm_metabolite]] <- bind_rows(
+        master_list$data$peakRegionSIL[[mrm_metabolite]],
+        tibble(
+          ms_function = idx_function,
+          ms_channel = channel_index,
+          ms_header_id = idx_mrm,
+          sampleMetabolite = mrm_metabolite,
+          mrm = paste0(round(precursor_mz,2), " > ", round(product_mz,2)),
+          precursor_mz = precursor_mz,
+          product_mz = product_mz,
+          samplePlate = idx_plate,
+          sampleName = idx_mzML,
+          peakApexInt = peakApexInt,
+          peakStartRT = peakStartRT,
+          peakApexRT = peakApexRT,
+          peakEndRT = peakEndRT,
+          peakStartIndex =peakStartIndex,
+          peakApexIndex = peakApexIndex,
+          peakEndIndex =peakEndIndex,
+          peakWidth = peakWidth,
+          #flCount = fl.count
+        )
+      )
+      
+      channel_index <- channel_index+1
+      
+       } #idx_mrm
+      
+    } #idx_function
+    
+  } #idx_mzML
+  
+} #idx_plate
+    
+    
+
+
+## finalise peak boundaries
+
+#identify Q and q ions and finalise boundaries per plate
+
+master_list$data$peakRegionSILFinal <- list()
+
+#idx_metabolite = names(master_list$data$peakRegionSIL)[13]#for testing loop
+#idx_metabolite = "LTE4"
+for(idx_metabolite in names(master_list$data$peakRegionSIL)){
+  
+  master_list$data$peakRegionSILFinal[[idx_metabolite]] <- list()
+  
+  #first ID Q ion across plate
+    q_tibble <- list()
+    
+    idx_channel = unique(master_list$data$peakRegionSIL[[idx_metabolite]]$ms_channel)[1]
+    for(idx_channel in unique(master_list$data$peakRegionSIL[[idx_metabolite]]$ms_channel)){
+      mean_intensity = master_list$data$peakRegionSIL[[idx_metabolite]] %>%
+        filter(ms_channel == idx_channel) %>%
+        .$peakApexInt %>%
+        median(na.rm = TRUE)
+      q_tibble <- bind_rows(
+        q_tibble,
+        tibble(
+          ms_channel = idx_channel,
+          mean_int = mean_intensity)
+      )
+    }
+  
+  #identify Q ion channel 
+  Q_ion <- q_tibble$ms_channel[which.max(q_tibble$mean_int)]
+  
+  master_list$data$peakRegionSIL[[idx_metabolite]]$Q_q <- "q"
+  master_list$data$peakRegionSIL[[idx_metabolite]]$Q_q[which(master_list$data$peakRegionSIL[[idx_metabolite]]$ms_channel == Q_ion)] <- "Q"
+  
+  
+  #finalise peak bounday of Q ion
+  idx_plate = unique(master_list$data$peakRegionSIL[[idx_metabolite]]$samplePlate)[1] #for testing loop
+  #for(idx_plate in unique(master_list$data$peakRegionSIL[[idx_metabolite]]$samplePlate)[1]){ #for testing loop
+  for(idx_plate in unique(master_list$data$peakRegionSIL[[idx_metabolite]]$samplePlate)){
+    plate_data <- master_list$data$peakRegionSIL[[idx_metabolite]] %>%
+      filter(samplePlate==idx_plate) %>%
+      filter(Q_q == "Q")
+    
+    master_list$data$peakRegionSILFinal[[idx_metabolite]] <- bind_rows(
+      master_list$data$peakRegionSILFinal[[idx_metabolite]],
+      tibble(
+        sample_plate = idx_plate,
+        ms_function = plate_data$ms_function %>% unique(),
+        ms_channel_Q = plate_data$ms_channel %>% unique(),
+        ms_header_id = plate_data$ms_header_id %>% unique(),
+        metabolite = idx_metabolite,
+        precursor_mz = plate_data$precursor_mz %>% unique() %>% round(2),
+        product_mz = plate_data$product_mz %>% unique() %>% round(2),
+        mrm = paste0(plate_data$precursor_mz %>% unique() %>% round(2), " > " , plate_data$product_mz %>% unique() %>% round(2)),
+        peakStartRT = (((plate_data$peakStartRT %>% min(na.rm = TRUE)) *100) %>% floor()) /100,
+        peakEndRT =  (((plate_data$peakEndRT %>% min(na.rm = TRUE)) *100) %>% ceiling()) /100,
+        peakApexRT = plate_data$peakApexRT %>% mean(na.rm = TRUE) %>% round(2),
+        peakStartIndex = plate_data$peakStartIndex %>% min(na.rm = TRUE) %>% round(2),
+        peakEndIndex = plate_data$peakEndIndex %>% max(na.rm = TRUE) %>% round(2)
+      )
+    )
+  
+  }#idx_plate
+}#idx_metabolite
+
+
+#merge lists together and sort
+
+  master_list$data$peakRegionFinal <- master_list$data$peakRegionFinal %>%
+    append(
+      master_list$data$peakRegionSILFinal
+    )
+
+  master_list$data$peakRegionFinal <- master_list$data$peakRegionFinal[order(names(master_list$data$peakRegionFinal))]
+  
+```
+
+
+# human check
+
+print visuals of each peak for check solution, LTR and PQC to evaluate the peak finding alorithm
+
+## peak Review
+
+```{r, eval=TRUE}
+
+
+#1 export plots of check and LTR and PQC
+
+#create review folders
+
+#create dir.
+
+if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots"))){
+    dir.create(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots"))
+  }
+
+if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/peakReview"))){
+  dir.create(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/peakReview"))
+}
+
+#set plot colors
+  plotColors = c(
+    check = "#E41A1C" ,
+    ltr = "#4DAF4A",  
+    pqc = "#FF7F00"
+  )
+
+  #open pdf device
+  pdf(
+    onefile = TRUE, width = 11.7, height = 4,
+    file = #gsub("", "-",
+                paste0(
+                  master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/peakReview/", Sys.Date(), "_", master_list$project_details$project_name, 
+                  "_all_metabolites_peakReview.pdf"
+                )
+    #)
+  )
+
+  #start at metabolite level
+  
+  #cycle through each mrm and produce a peak review plot
+  #idx_mrm = "TOL"
+  i = 1
+  totalMRM = length(master_list$data$peakRegionFinal %>% bind_rows() %>% arrange(metabolite) %>% .$metabolite %>% unique())
+  #for(idx_mrm in c("GCA", "GCA-SIL_d4")){ # for testing
+  for(idx_mrm in (master_list$data$peakRegionFinal %>% bind_rows() %>% arrange(metabolite) %>% .$metabolite %>% unique() ) ){
+  
+    message(paste0("printing ", i, " of ", totalMRM, " metabolites: ", idx_mrm))
+    
+    print(ggplot() + 
+            annotate("text", x = 4, y = 25, size=8, label = idx_mrm) + 
+            theme_void())
+
+  #get plate information
+  
+peakReview <- list()
+
+reviewPlotDataAll <- list()
+
+for(idx_plate in master_list$project_details$plateList){
+  print(idx_plate)
+  
+    #get precursor and product info from peakRegion table
+  precursor_mz = master_list$data$peakRegionFinal[[idx_mrm]] %>%
+    filter(sample_plate == idx_plate) %>%
+    .$precursor_mz %>%
+    unique()
+  product_mz = master_list$data$peakRegionFinal[[idx_mrm]] %>%
+    filter(sample_plate == idx_plate) %>%
+    .$product_mz %>%
+    unique()
+  #find mrm function in the mzML file
+  mzml_mrm <- master_list$data$peakRegionFinal[[idx_mrm]] %>%
+    filter(sample_plate == idx_plate) %>%
+    .$ms_header_id
+  #print plate function 
+  print(paste0("plate MS function = ", mzml_mrm))
+  #peakStart in check
+  peakStartRT = master_list$data$peakRegionFinal[[idx_mrm]] %>%
+    filter(sample_plate == idx_plate) %>%
+    .$peakStartRT %>% round(digits = 3) %>%
+    unique()
+  #peakEnd in check
+  peakEndRT = master_list$data$peakRegionFinal[[idx_mrm]] %>%
+    filter(sample_plate == idx_plate) %>%
+    .$peakEndRT %>% round(digits = 3) %>%
+    unique()
+  #peakApex in check
+  peakApexRT = master_list$data$peakRegionFinal[[idx_mrm]] %>%
+    filter(sample_plate == idx_plate) %>%
+    .$peakApexRT %>% round(digits = 3) %>%
+    unique()
+
+  peakReview[[idx_plate]] <- list(
+    `mzML.list` = c(
+      master_list$data$mzR[[idx_plate]][grepl("(?i)check", master_list$data$mzR[[idx_plate]])],
+      master_list$data$mzR[[idx_plate]][grepl("(?i)_ltr", master_list$data$mzR[[idx_plate]])],
+      master_list$data$mzR[[idx_plate]][grepl("(?i)_pqc", master_list$data$mzR[[idx_plate]])]
+    )
+  )
+
+  #create empty list
+  peakReview[[idx_plate]][["chromatograms"]] <- list()
+  
+  #now cycle through each mzML  
+  idx_mzML = peakReview[[idx_plate]]$mzML.list[1]
+  for(idx_mzML in peakReview[[idx_plate]]$mzML.list){
+    
+    #read in chromatogram
+    
+    #temp mzml object
+    tempMzml <- list(
+      mzR_object =  mzR::openMSfile(
+        filename = paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/mzml/",idx_plate, "/", idx_mzML)
+      )
+    )
+    
+    #create mzR header
+    tempMzml$mzR_header <- mzR::chromatogramHeader(tempMzml$mzR_object)
+    
+    #work around fix to fix issue where some projects have a method mismatch that mis-aligns the chromatogramIndex
+    if(length(mzml_mrm) > 1){
+      mzml_mrm = tempMzml$mzR_header %>%
+        as_tibble() %>%
+        filter(chromatogramIndex %in% mzml_mrm) %>%
+        filter(floor(precursorIsolationWindowTargetMZ) == floor(precursor_mz)) %>%
+        filter(floor(productIsolationWindowTargetMZ) == floor(product_mz)) %>%
+        .$chromatogramIndex
+    }
+
+    #create mzR chromatogram
+    tempMzml$mzR_chromatogram <- mzR::chromatograms(tempMzml$mzR_object)
+    
+    peakReview[[idx_plate]]$chromatograms[[idx_mzML]] <- tempMzml
+    
+  } #end idx mzML
+  
+  #now extract chromatogram and plot for each mzml across each plate
+  #create empty data
+  reviewPlotData <- list() 
+  
+  for(idx_mzML in names(peakReview[[idx_plate]]$chromatograms)){
+    tempMzml <- list()
+    tempMzml[["smooth"]] = tibble(
+      time = peakReview[[idx_plate]]$chromatograms[[idx_mzML]]$mzR_chromatogram[[mzml_mrm]][["rtime"]],
+      intensity = peakReview[[idx_plate]]$chromatograms[[idx_mzML]]$mzR_chromatogram[[mzml_mrm]][,2] %>%
+        pracma::savgol(fl = 7, forder = 0, dorder = 0) %>%
+        pracma::savgol(fl = 5, forder = 0, dorder = 0) %>%
+        pracma::savgol(fl = 3, forder = 0, dorder = 0)
+    ) %>% setNames(c("time", "intensity")) %>%
+      add_column(.before=1,
+                 sampleName = idx_mzML,
+                 samplePlate = idx_plate,
+                 sampleMetabolite = idx_mrm,
+                 precursor_mz = precursor_mz,
+                 product_mz = product_mz) %>% 
+      add_column(.after = "sampleName",
+                 sampleFacet = sub("(?i)_fepp_", ".", paste0(gsub("_.*", "", .$sampleName), "_", gsub(".*@", "", .$sampleName)))
+      )
+    
+    reviewPlotData <- bind_rows(
+      reviewPlotData,
+      tempMzml$smooth
+    )
+    
+  } #idx_mzML
+  
+  #add a sample_type column
+  reviewPlotData <- reviewPlotData %>%
+    add_column(sample_type = "check")
+  reviewPlotData$sample_type[grepl("(?i)ltr", reviewPlotData$sampleFacet)] <- "ltr"
+  reviewPlotData$sample_type[grepl("(?i)pqc", reviewPlotData$sampleFacet)] <- "pqc"
+  
+  
+  #print plot
+   print(
+      ggplot(
+        data = reviewPlotData, aes(x = time, y = intensity, color = sample_type)
+      ) +
+        geom_line(alpha = 0.5, linetype = "solid") +
+        #facet_wrap(facets = "sampleFacet", scales = "free_y", ncol  = 2) +
+        facet_wrap(facets = c("samplePlate", "sample_type"), scales = "free_y", ncol = 3) +
+        scale_color_manual(values = plotColors) +
+        geom_vline(xintercept = peakEndRT) +
+        geom_vline(xintercept = peakStartRT) +
+        theme_bw() +
+        ggtitle(paste0(idx_mrm, "; ", idx_plate, "; integration start = ", peakStartRT, "; integration end = ", peakEndRT)) +
+        scale_x_continuous(breaks = round(seq(min(reviewPlotData$time), max(reviewPlotData$time), by = 0.1), 1)) +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+      
+  )
+   
+  
+  
+  } #idx_plate
+
+ 
+   i = i+1
+
+} #idx_mrm
+  
+   dev.off()
+  
+   write_csv(
+    x = master_list$data$peakRegionFinal %>% bind_rows() %>% select(sample_plate, metabolite, peakStartRT, peakEndRT) %>% arrange(metabolite, sample_plate),
+    file = paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/peakReview/", Sys.Date(), "_", master_list$project_details$project_name, "_z_peakReviewTemplate.csv")
+  )
+
+```
+
+*USER INPOUT REQUIRED*
+
+This chunk provides the opportunity to review peak finding algorith and update the windows using the exported csv folder. To do this:
+
+1. Navigate to ~projectID/wash[AB or N]/plots/peakReview
+2. open the pdf and the csv side by side
+3. scroll through the pdf and make RT updates in the CSV where needed.
+4. for efficiency, only consider gross changes where clear error has occured. consider check solution, LTR and PQC
+
+```{r}
+svDialogs::dlg_message(paste0("perform peak review in folder: ", master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/peakReview/.............. and then edit template for each plate for any adjustments"))
+
+svDialogs::dlg_message(paste0("for efficiency, only consider gross changes where clear error has occured. consider check solution, LTR and PQC"))
+
+
+## read in edited template
+
+
+svDialogs::dlg_message(paste0("rename the file to contain `_z_peakReviewTemplateEdited.csv` in file name"))
+
+updateFile <- list.files(path = paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/peakReview/"), 
+                         pattern = "_z_peakReviewTemplateEdited", full.names = TRUE
+                         )
+
+if(length(updateFile) > 1){
+ svDialogs::dlg_message("error: too many files, there should only be 1 edited update. review and return")
+  stop("too many files, there should only be 1 edited update. review and return")
+}
+
+if(length(updateFile == 1)){
+  updateFile <- read_csv(updateFile)
+}
+
+
+#replace NA with "NA" for nicotinic acid
+#updateFile$metabolite[is.na(updateFile$metabolite)] <- "NA"
+
+for(idx_metabolite in names(master_list$data$peakRegionFinal)){
+  for(idx_plate in master_list$data$peakRegionFinal[[idx_metabolite]]$sample_plate){
+    #get updated times
+    newStart <- updateFile %>% 
+      filter(sample_plate == idx_plate & metabolite == idx_metabolite) %>% .$peakStartRT %>% as.numeric()
+    # updated end
+    newEnd <- updateFile %>% 
+      filter(sample_plate == idx_plate & metabolite == idx_metabolite) %>% .$peakEndRT %>% as.numeric()
+    #update start RT
+    master_list$data$peakRegionFinal[[idx_metabolite]]$peakStartRT[which(master_list$data$peakRegionFinal[[idx_metabolite]]$sample_plate==idx_plate)] <- newStart
+    #update end RT
+    master_list$data$peakRegionFinal[[idx_metabolite]]$peakEndRT[which(master_list$data$peakRegionFinal[[idx_metabolite]]$sample_plate==idx_plate)] <- newEnd
+     
+    #update index
+    #test file
+    tempMzml <- list.files(path = paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/mzml/",idx_plate), full.names = TRUE)
+    tempMzml <- tempMzml[grepl("(?i)_ltr", tempMzml)][1]
+    tempMzml <- list(mzR_object = mzR::openMSfile(filename = tempMzml))
+    #create mzR header
+    tempMzml$mzR_header <- mzR::chromatogramHeader(tempMzml$mzR_object)
+    #create mzR chromatogram
+    tempMzml$mzR_chromatogram <- mzR::chromatograms(tempMzml$mzR_object)
+    
+    #set function
+    mzml_mrm <- master_list$data$peakRegionFinal[[idx_metabolite]]$ms_header_id
+    
+    #set new index
+    newStartIndex <- NA
+    #set new end
+    newEndIndex <- NA
+    
+    #update start RT
+    master_list$data$peakRegionFinal[[idx_metabolite]]$peakStartIndex[which(master_list$data$peakRegionFinal[[idx_metabolite]]$sample_plate==idx_plate)] <- newStartIndex
+    #update end RT
+    master_list$data$peakRegionFinal[[idx_metabolite]]$peakEndIndex[which(master_list$data$peakRegionFinal[[idx_metabolite]]$sample_plate==idx_plate)] <- newEndIndex
+    
+    
+  }#idx plate
+}#idx metabolite
+
+
+
+#master_list$data$peakRegionFinal %>% bind_rows() %>% View()
+
+```
+
+# peak integration
+
+script will automatically perform peak integration
+
+## Import mzML, extract chromData, isolate and integrate peak regions
+
+using the identified peak regions isolate only scan data for the peak and then integrate area under the curve for each region
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+#object for data for chromatogram
+master_list$data$chromatogram <- list()
+master_list$data$peakAreaMetabolite <- list()
+master_list$data$timestamp <- list()
+
+#idx_plate = master_list$project_details$plateList[1] #for testing
+#for(idx_plate in master_list$project_details$plateList[1]){ #for testing
+for(idx_plate in master_list$project_details$plateList){
+  
+  print(idx_plate)
+  
+  master_list$data$timestamp[[idx_plate]] <- list()
+  
+  idx_mzML = master_list$data$mzR[[idx_plate]][8] #for testing loop
+  #for(idx_mzML in master_list$data$mzR[[idx_plate]][c(1:6, length(master_list$data$mzR[[idx_plate]]))]){ # for testing loop
+  for(idx_mzML in master_list$data$mzR[[idx_plate]]){
+  
+    #create temp mzML object
+    tempMzml <- list()
+    #load mzml
+    tempMzml$mzR_object <- mzR::openMSfile(
+        filename = paste0(master_list$project_details$plateDirList[grepl(idx_plate, master_list$project_details$plateDirList)], "/", idx_mzML)
+      )
+    #create mzR header
+    tempMzml$mzR_header <- mzR::chromatogramHeader(tempMzml$mzR_object)
+    #create mzR chromatogram
+    tempMzml$mzR_chromatogram <- mzR::chromatograms(tempMzml$mzR_object)
+      
+    #store sample timestamp
+    master_list$data$timestamp[[idx_plate]] <- bind_rows(
+      master_list$data$timestamp[[idx_plate]],
+      tibble(
+        samplePlate = idx_plate,
+        sampleName = idx_mzML,
+        sampleTimestamp = tempMzml$mzR_object@backend$getRunStartTimeStamp()
+      ) %>%
+          add_column(.before = 1,
+            sampleID = paste0(.$samplePlate, "_", .$sampleName)
+          )
+        )
+    
+# extract peak region
+#idx_mrm = "GCA-SIL_d4" # for testing loop
+#idx_mrm ="TCA-SIL_d4"
+for(idx_mrm in names(master_list$data$peakRegionFinal)){
+  #for(idx_mrm in c("GCA", "GCA-SIL_d4")){ 
+  #create list on first iteration of mrm
+  if(!idx_mrm %in% names(master_list$data$chromatogram)){master_list$data$chromatogram[[idx_mrm]] <- list()}
+  if(!idx_mrm %in% names(master_list$data$peakAreaMetabolite)){master_list$data$peakAreaMetabolite[[idx_mrm]] <- list()}
+
+  #get precursor and product info from peakRegion table
+  precursor_mz = master_list$data$peakRegionFinal[[idx_mrm]] %>%
+    filter(sample_plate == idx_plate) %>%
+    .$precursor_mz %>% unique()
+  product_mz = master_list$data$peakRegionFinal[[idx_mrm]] %>%
+    filter(sample_plate == idx_plate) %>%
+    .$product_mz %>%
+    unique()
+   #find mrm function in the mzML file
+   mzml_mrm <- master_list$data$peakRegionFinal[[idx_mrm]] %>%
+     filter(sample_plate == idx_plate) %>%
+     .$ms_header_id
+   
+   #work around if functions and channels have moved as a result of an RT window update
+   if(length(mzml_mrm) > 1){
+      mzml_mrm = tempMzml$mzR_header %>%
+        as_tibble() %>%
+        filter(chromatogramIndex %in% mzml_mrm) %>%
+        filter(floor(precursorIsolationWindowTargetMZ) == floor(precursor_mz)) %>%
+        filter(floor(productIsolationWindowTargetMZ) == floor(product_mz)) %>%
+        .$chromatogramIndex
+    }
+   
+   
+   #peakStart in check
+   peakStartRT = master_list$data$peakRegionFinal[[idx_mrm]] %>%
+     filter(sample_plate == idx_plate) %>%
+     filter(ms_header_id == mzml_mrm) %>%
+     .$peakStartRT %>% as.numeric() %>% round(digits = 3) %>% min(na.rm = TRUE)
+   #peakEnd in check
+   peakEndRT = master_list$data$peakRegionFinal[[idx_mrm]] %>%
+     filter(sample_plate == idx_plate) %>%
+     filter(ms_header_id == mzml_mrm) %>%
+     .$peakEndRT %>% as.numeric() %>% round(digits = 3) %>% max(na.rm = TRUE)
+   #peakApex in check
+   peakApexRT = master_list$data$peakRegionFinal[[idx_mrm]] %>%
+     filter(sample_plate == idx_plate) %>%
+     filter(ms_header_id == mzml_mrm) %>%
+     .$peakApexRT %>% as.numeric() %>% round(digits = 3) %>% base::mean(na.rm = TRUE)
+
+
+#set empty object on first iteration
+  if(!idx_plate %in% names(master_list$data$chromatogram[[idx_mrm]])){
+    master_list$data$chromatogram[[idx_mrm]][[idx_plate]] <- list()
+    master_list$data$chromatogram[[idx_mrm]][[idx_plate]][["all"]] <- list()
+    master_list$data$chromatogram[[idx_mrm]][[idx_plate]][["peak"]] <- list()
+  }
+   
+  
+   #depending on mzR version header could be "rtime" or "time"
+  if(length(tempMzml$mzR_chromatogram[[mzml_mrm]][["rtime"]]) > 0){mzHeader = "rtime"}
+  if(length(tempMzml$mzR_chromatogram[[mzml_mrm]][["time"]]) > 0){mzHeader = "time"}
+   
+  #finalise chromatogram data 
+  tempMzml$smooth <-  #smooth chromatogram
+    tibble(
+      time = tempMzml$mzR_chromatogram[[mzml_mrm]][[mzHeader]],
+      intensity = tempMzml$mzR_chromatogram[[mzml_mrm]][,2] %>%
+        pracma::savgol(fl = 7, forder = 0, dorder = 0) %>%
+        pracma::savgol(fl = 5, forder = 0, dorder = 0) %>%
+        pracma::savgol(fl = 3, forder = 0, dorder = 0)
+      ) %>% 
+    setNames(c("time", "intensity")) %>%
+    add_column(.before=1,
+               sampleName = idx_mzML,
+               samplePlate = idx_plate,
+               sampleMetabolite = idx_mrm,
+               precursor_mz = precursor_mz,
+               product_mz = product_mz) %>% 
+    add_column(.after = "sampleName",
+               sampleFacet = sub("(?i)_fepp_", ".", paste0(gsub("_.*", "", .$sampleName), "_", gsub(".*@", "", .$sampleName)))
+    )
+  
+  
+  #bind chromatogram data for all window
+   master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$all <- bind_rows(
+     master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$all,
+     tempMzml$smooth
+   )#bind rows
+   
+  #get peak Index
+  peakStartIndex <- which.min(abs(tempMzml$smooth$time - peakStartRT))
+  #set new end
+  peakEndIndex <- which.min(abs(tempMzml$smooth$time - peakEndRT))
+   
+  #crop plot
+  tempMzml$smoothCrop <- tempMzml$smooth[c(peakStartIndex:peakEndIndex),]
+  
+   # bind peak region
+   master_list$data$chromatogram[[idx_mrm]][[idx_plate]][["peak"]] <- bind_rows(
+     master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$peak,
+     tempMzml$smoothCrop
+   )
+   
+   
+  
+  #plot(master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$peak$intensity)
+      
+  #get peak intensity using Trapz
+  peakIntegral <- tempMzml$smoothCrop$intensity %>%
+    pracma::trapz(.)
+    
+  #find peak apex
+  peakApexIdx = which.min(abs(tempMzml$smooth$intensity - max(tempMzml$smoothCrop$intensity)))
+  
+  # find peak RT
+  peakRT = tempMzml$smooth$time[peakApexIdx] %>% round(2)
+  
+  #combine into a master tibble
+  master_list$data$peakAreaMetabolite[[idx_mrm]] <- bind_rows(
+    master_list$data$peakAreaMetabolite[[idx_mrm]],
+    tibble(
+      samplePlate = idx_plate,
+      sampleName = idx_mzML,
+      sampleMetabolite = idx_mrm,
+      precursor_mz = precursor_mz,
+      product_mz = product_mz,
+      peakAreaMetabolite = peakIntegral,
+      peakRT = peakRT
+    )
+  )#bind_rows 
+} #idx_mrm
+}#idx_mzml
+}#idx_plate
+
+#rm(tempMzml)
+
+```
+
+##plot chromatograms visuals
+
+plot the chromatograms for the total project. depending on project size this can be time consuming activity. 
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+#create dir.
+
+if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots"))){
+    dir.create(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots"))
+  }
+
+  if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/peakIntegrals"))){
+    dir.create(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/peakIntegrals"))
+  }
+
+#object for data for chromatogram
+#master_list$plots$chromatogram <- list()
+
+#RColorBrewer::brewer.pal(n=7, name = "Set1")
+#prepare colours
+  plotColors = c(
+    check = "#E41A1C" ,
+    ltr = "#4DAF4A",  
+    vltr = "#984EA3",
+    sltr = "gold",
+    pqc = "#FF7F00",
+    sample = "#377EB8",
+    blank = "darkgrey"
+  )
+
+#idx_mrm = "TRYP" # for testing loop
+  i = 1
+  totalMRM = length(names(master_list$data$peakRegionFinal))
+for(idx_mrm in names(master_list$data$peakRegionFinal)){
+   #master_list$plots$chromatogram[[idx_mrm]] <- list()
+  
+  message(paste0("printing plot ", i, " of ", totalMRM, "; ", idx_mrm, ".  ")) 
+  i=i+1
+  
+   #open png device
+  pdf(onefile = TRUE, width = 16, height = 7.5,  
+    file =
+      paste0(
+        master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/peakIntegrals/", 
+        Sys.Date(), "_", master_list$project_details$project_name, "_AB_peakIntegrals_",  gsub(" ", "_", fedmatch::clean_strings(idx_mrm)), ".pdf"
+    )
+    )
+    
+   
+#idx_plate="RARp003a"   
+#for(idx_plate in master_list$project_details$plateList[1]){ #for testing
+for(idx_plate in master_list$project_details$plateList){
+
+  #prepare data
+  #add sampleType
+  master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$peak$sampleType <- "sample"
+  #check sample
+  master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$peak$sampleType[grep(
+    "check", master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$peak$sampleName, ignore.case = TRUE)] <- "check"
+  #ltr sample
+  master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$peak$sampleType[grep(
+    "ltr", master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$peak$sampleName, ignore.case = TRUE)] <- "ltr"
+  #vltr sample
+  master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$peak$sampleType[grep(
+    "vltr", master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$peak$sampleName, ignore.case = TRUE)] <- "vltr"
+  #sltr sample
+  master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$peak$sampleType[grep(
+    "sltr", master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$peak$sampleName, ignore.case = TRUE)] <- "sltr"
+  #pqc sample
+  master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$peak$sampleType[grep(
+    "pqc", master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$peak$sampleName, ignore.case = TRUE)] <- "pqc"
+  #blank sample
+  master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$peak$sampleType[grep(
+    "blank", master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$peak$sampleName, ignore.case = TRUE)] <- "blank"
+  
+  #get peak start RT for vlines
+  peakStart <- master_list$data$peakRegionFinal[[idx_mrm]] %>% filter(sample_plate == idx_plate) %>% .$peakStartRT %>% as.numeric() %>% min(na.rm = TRUE) %>% round(2)
+  peakEnd <- master_list$data$peakRegionFinal[[idx_mrm]] %>% filter(sample_plate == idx_plate) %>% .$peakEndRT %>% as.numeric() %>%  max(na.rm = TRUE) %>% round(2)
+  mrmTitle <- master_list$data$peakRegionFinal[[idx_mrm]] %>% .$mrm %>% unique()
+  
+  #create plot
+  loopPlot <- ggplot(
+    data = master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$all, 
+    aes(x = time, y = intensity)) + 
+    geom_vline(xintercept = peakStart, linetype = "dashed") +
+    geom_vline(xintercept = peakEnd, linetype = "dashed") +
+    #geom_point(shape = 4, size = 2, color = "lightgrey") +
+    geom_line(na.rm = TRUE, colour = "grey") +
+    geom_line(
+      data = master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$peak, 
+      aes(x = time, y = intensity, color = sampleType), na.rm = TRUE) +
+    theme_bw() + 
+    ggtitle(paste0(idx_mrm, "; ", mrmTitle, "; ", idx_plate, "; peak start = ", peakStart, "; peak end = ", peakEnd)) + 
+    scale_y_continuous(labels = scales::scientific) +
+    scale_colour_manual(values = plotColors) +
+    facet_wrap(scales = "free_y", facets = "sampleFacet") +
+    theme(
+      axis.text = element_text(size = 6),
+      strip.text = element_text(size = 5)
+    ) +
+    scale_x_continuous(breaks = round(seq(min(master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$all$time), max(master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$all$time), by = 0.1), 1)) 
+    
+  print(loopPlot)
+
+}#idx_plate
+  
+dev.off()
+
+}#idx_mrm
+
+#print(Sys.time() - a)
+
+
+```
+
+
+## CCC control charts
+
+create quick visual control charts for the control chart check. this chunk is skipped if it is a full plate analysis (control charts happen later)
+
+```{r}
+
+#if(functionListMethod == "CCC"){
+
+
+  
+nList <- c(
+  "5-HIAA", "5-HIAA-SIL_d5", "CDCA", "CDCA-SIL_d4", "GCDCA", "GCDCA-SIL_d4", "GUDCA", "GUDCA-SIL_d4", 
+  "XA", "XA-SIL_d4", "12(R)-HETE", "12(R)-HETE-SIL_d8",  "15(S)-HETE","15(S)-HETE-SIL_d8", "8i-PGF2a", "8i-PGF2a-SIL_d4"
+)
+
+abList <- c(
+  "3-HAA", "3-HAA-SIL_D3", "CAR(2:0)", "CAR(2:0)-SIL_d3", "CAR(4:0)", "CAR(4:0)-SIL_d3", "CAR(i5:0)", "CAR(i5:0)-SIL_d9", "KYN", "KYN-SIL_D4", "NEO", "NEO-SIL_13C5", "TRYP", "TRYP-SIL_d5", "SER", "SER-SIL_d4"
+)
+
+
+  #create dir.
+
+if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots"))){
+    dir.create(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots"))
+  }
+
+  if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/CCC"))){
+    dir.create(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/CCC"))
+  }
+  
+  
+#make plot list
+if(master_list$project_details$wash == "AB"){CCCplotList <- abList}; if(master_list$project_details$wash == "N"){CCCplotList <- nList}
+CCCplotList <- CCCplotList[!grepl("-SIL", CCCplotList)] 
+CCCplotList <- sort(CCCplotList)
+
+#open PDF
+pageWidth <- length(master_list$project_details$plateList)
+
+#open pdf device
+pdf(
+  onefile = TRUE, width = (15 + pageWidth), height = 10,
+  file = paste0(
+    master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/CCC/", Sys.Date(), "_", master_list$project_details$project_name, "_SPE_", master_list$project_details$wash, "_CCC.pdf"
+    
+  )
+)
+
+idxPlot = CCCplotList[2]
+for(idxPlot in CCCplotList){
+  
+  message(paste0("printing CCC for ", idxPlot)) 
+  
+  subPlotList <- names(master_list$data$peakAreaMetabolite)[grepl(idxPlot, names(master_list$data$peakAreaMetabolite), fixed = TRUE)]
+  
+  plotData <- left_join(by = "sampleName",
+                        master_list$data$peakAreaMetabolite[subPlotList[!grepl("SIL", subPlotList)]][[1]] %>%
+                          filter(!grepl("check", sampleName, ignore.case = TRUE)),
+                        master_list$data$peakAreaMetabolite[subPlotList[grepl("SIL", subPlotList)]][[1]] %>%
+                          filter(!grepl("check", sampleName, ignore.case = TRUE)) %>%
+                          select(sampleName, peakAreaMetabolite) %>%
+                          rename(peakAreaSil = peakAreaMetabolite)
+  ) %>%
+    arrange(samplePlate, sampleName) %>%
+    add_column(
+      peakResponse = .$peakAreaMetabolite/.$peakAreaSil,
+      index = c(1:nrow(.))
+    ) %>%
+    select(index, samplePlate, sampleName, peakAreaMetabolite, peakAreaMetabolite, peakAreaSil, peakResponse) %>%
+    pivot_longer(data = .,
+                 c("peakAreaMetabolite", "peakAreaSil", "peakResponse"),
+                 names_to = "dataType",
+                 values_to = "value"
+    ) %>%
+    mutate(
+      samplePlate = gsub("a", "", samplePlate),
+      samplePlate = gsub("b", "", samplePlate),
+      sampleType = sampleName %>% gsub(".*p0", "", .) %>% sub("_", "-", .)%>% gsub(".*-", "", .) %>% gsub("_.*", "", .)
+    )
+  
+  #set plate boundaries
+  plateBoundaryIdx = NULL
+    for(idxPlate in unique(plotData$samplePlate)){
+      plateBoundaryIdx <- c(
+        plateBoundaryIdx, 
+        plotData %>%
+          filter(samplePlate == idxPlate) %>%
+          .$index %>%
+          max()
+      )
+    }
+    
+    plateBoundaryIdx <- plateBoundaryIdx[-length(plateBoundaryIdx)]
+    
+    
+    #make plot
+
+    
+    plotList = list(
+      title = data.frame(x = 0.5, y = 0.5, label = idxPlot) %>%
+        ggplot(., aes(x = x, y = y, label = label)) +
+        geom_text(size = 6) +
+        theme_void() +  # removes axes and background
+        xlim(0, 1) + ylim(0, 1)  # optional: set limits to centre the text
+    )
+    
+    
+    idxData = unique(plotData$dataType)[3]
+    for(idxData in unique(plotData$dataType)){
+    
+      loopPlotData = plotData %>%
+        filter(dataType == idxData)
+      
+      #set custom y limits
+      ylimits = c(median(loopPlotData$value, na.rm = TRUE)- (IQR(loopPlotData$value, na.rm = TRUE)*4),
+            median(loopPlotData$value, na.rm = TRUE) + (IQR(loopPlotData$value, na.rm = TRUE)*4)
+          )
+      
+      #make plot
+      plotList[[idxData]] <- loopPlotData %>%
+        filter(sampleType != "SLTR") %>%
+        ggplot(
+          aes(
+            x=index,
+            y=value,
+            fill = sampleType,
+            shape = sampleType,
+            size=sampleType,
+            colour = sampleType
+          )
+        ) +
+        geom_point() +
+        scale_fill_manual(values = c("LTR" = "#F8766D", "PQC" = "#7CAE00", "SLTR" = "#00BFC4", "vLTR" = "black")) +
+        scale_colour_manual(values = c("LTR" = "black", "PQC" = "black", "SLTR" = "#00BFC4", "vLTR" = "black")) +
+        scale_shape_manual(values = c("LTR" = 21, "PQC" = 21, "SLTR" = 4, "vLTR" = 4))+
+        scale_size_manual(values = c("LTR" = 4, "PQC" = 4, "SLTR" = 1.5, "vLTR" = 2)) +
+        ggtitle(idxData)+ 
+        theme_bw() +
+        geom_vline(xintercept = plateBoundaryIdx) +
+        geom_hline(yintercept = loopPlotData %>% filter(sampleType == "PQC") %>% .$value %>% median(na.rm = TRUE), linetype = "dashed", colour = "#7CAE00", linewidth = 1)+
+        geom_hline(yintercept = loopPlotData %>% filter(sampleType == "LTR") %>% .$value %>% median(na.rm = TRUE), linetype = "dashed", colour = "#F8766D", linewidth = 1)+
+        geom_hline(yintercept = loopPlotData %>% filter(sampleType == "vLTR") %>% .$value %>% median(na.rm = TRUE), linetype = "dashed", colour = "black", linewidth = 0.5)+
+        ylim(ylimits) 
+        
+  }#idxData
+    
+    print(
+      cowplot::plot_grid(
+        plotlist = plotList,
+        ncol = 1 ,
+        rel_heights = c(0.1,1,1,1)
+    )
+    )
+  
+  } #idxPlot
+
+  dev.off() #turn off pdf
+  
+  #} #if
+
+```
+
+#.
+
+# checkpoint save
+
+#.
+
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/rda/"))){
+  dir.create(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/rda/"))
+}
+
+save(
+  master_list,
+  file = paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/rda/",
+                Sys.Date(), "_",
+                master_list$project_details$project_name,
+                "_SPE_",
+                master_list$project_details$wash,
+                "_checkpoint_1.rda"
+  )
+)
+
+# load(
+#   file = paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/rda/",
+#                 Sys.Date(), "_",
+#                 master_list$project_details$project_name,
+#                 "_SPE_",
+#                 master_list$project_details$wash,
+#                 "_checkpoint_1.rda"
+#   )
+# )
+
+```
+
+# compile data
+
+## combine data
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+#move/rename peakArea object
+#master_list$data$peakAreaMetabolite <- master_list$data$peakArea
+
+#create new object
+master_list$data$peakArea <- list()
+
+master_list$data$peakArea$Long <- left_join(by = "sampleID",
+  #sample timestamp
+  master_list$data$timestamp %>% bind_rows() %>% select(sampleID, sampleTimestamp),
+  #peakArea
+  master_list$data$peakAreaMetabolite %>% 
+  bind_rows() %>%
+  add_column(.after = "sampleMetabolite",
+    sampleID = paste0(.$samplePlate, "_", .$sampleName)
+  ) %>%
+  add_column(.after = "sampleName",
+    sampleType = "sample")
+)
+  
+#check sample
+master_list$data$peakArea$Long$sampleType[grep("check", master_list$data$peakArea$Long$sampleName, ignore.case = TRUE)] <- "check"
+#ltr sample
+master_list$data$peakArea$Long$sampleType[grep("pqc", master_list$data$peakArea$Long$sampleName, ignore.case = TRUE)] <- "pqc"
+#vltr sample
+master_list$data$peakArea$Long$sampleType[grep("ltr", master_list$data$peakArea$Long$sampleName, ignore.case = TRUE)] <- "ltr"
+#sltr sample
+master_list$data$peakArea$Long$sampleType[grep("sltr", master_list$data$peakArea$Long$sampleName, ignore.case = TRUE)] <- "sltr"
+#pqc sample
+master_list$data$peakArea$Long$sampleType[grep("vltr", master_list$data$peakArea$Long$sampleName, ignore.case = TRUE)] <- "vltr"
+#blank sample
+master_list$data$peakArea$Long$sampleType[grep("blank", master_list$data$peakArea$Long$sampleName, ignore.case = TRUE)] <- "blank"
+
+
+
+### create mising values
+#(because some transitions have noise a missing value can be recorded as non-missing)
+master_list$data$peakArea$Long$peakAreaMetabolite[which(master_list$data$peakArea$Long$peakAreaMetabolite<250000)] <- NA
+
+
+#make a wide version
+master_list$data$peakArea$wide <- master_list$data$peakArea$Long %>%
+  rename(peakArea = peakAreaMetabolite) %>%
+  pivot_wider(
+    id_cols = c(sampleID, sampleTimestamp, samplePlate,sampleName, sampleType),  
+    names_from = sampleMetabolite, 
+    values_from = peakArea
+    )
+
+#remove check, conditioning etc
+master_list$data$peakArea$wide <- master_list$data$peakArea$wide %>%
+  filter(sampleType == "pqc" | sampleType == "sample" | sampleType == "ltr" | sampleType == "sltr" | sampleType == "vltr") %>%
+    arrange(sampleTimestamp) %>%
+    add_column(sampleRunIndex = c(1:nrow(.)), .before = 1) %>%
+  #add_factor column for plotting
+  add_column(.after = "sampleType",
+             sampleTypeFactor = factor(.$sampleType ,
+                                       levels = c("sample", "pqc", "ltr", "vltr", "sltr"), 
+                                       ordered = TRUE),
+             sampleQC = "sample")
+
+#select ltr as study QC type
+master_list$data$peakArea$wide$sampleQC[grepl("ltr",master_list$data$peakArea$wide$sampleType)] <- "qc"
+master_list$data$peakArea$wide$sampleQC[grepl("sltr",master_list$data$peakArea$wide$sampleType)] <- "sample"
+master_list$data$peakArea$wide$sampleQC[grepl("vltr",master_list$data$peakArea$wide$sampleType)] <- "sample"
+
+
+#remove neg values
+tempData <-  master_list$data$peakArea$wide %>% select(!contains("sample")) %>% as.matrix()
+tempData[which(tempData <0)] <- 0
+master_list$data$peakArea$wide <- bind_cols(
+  master_list$data$peakArea$wide %>% select(contains("sample")),
+  tempData %>% as_tibble()
+)
+
+
+
+#remove sltr (only x per plate)
+master_list$data$peakArea$wide <- master_list$data$peakArea$wide %>% 
+  filter(sampleType != "sltr")
+
+```
+
+## Filter failed samples
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+#first flag samples where addition of SIL may have failed
+
+silSigal <- tibble(
+  sampleID = master_list$data$peakArea$wide %>%
+    .$sampleID,
+  summedSignal = master_list$data$peakArea$wide %>%
+    select(!contains("sample")) %>%
+    select(contains("-sil")) %>%
+    rowSums(na.rm = TRUE)
+)
+
+metaboliteSignal <- tibble(
+  sampleID = master_list$data$peakArea$wide %>%
+    .$sampleID,
+  summedSignal = master_list$data$peakArea$wide %>%
+    select(!contains("sample")) %>%
+    select(!contains("-sil")) %>%
+    rowSums(na.rm = TRUE)
+)
+
+
+flaggedSamples <- unique(
+  c(
+    silSigal[["sampleID"]][which(silSigal$summedSignal < (median(silSigal$summedSignal)*0.01))],
+  metaboliteSignal[["sampleID"]][which(metaboliteSignal$summedSignal < (median(metaboliteSignal$summedSignal)*0.01))]
+  ))
+
+master_list$data$peakArea$wideFiltered <- master_list$data$peakArea$wide %>%
+  filter(!sampleID %in% flaggedSamples)
+```
+
+## Filter Failed features (missing value)
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+flaggedFeature <- NULL
+
+idx_metabolite <- "8-OH-2-dG"
+#idx_metabolite = names(master_list$data$peakArea$wide %>% select(!contains("sample")))[1] #for testign loop
+for(idx_metabolite in names(master_list$data$peakArea$wide %>% select(!contains("sample")))){
+  #calculate for sample
+  sampleMissing <- which(is.na(master_list$data$peakArea$wideFiltered %>% filter(sampleType == "sample") %>% .[[idx_metabolite]])) %>% length()
+  samplePercent <- (100/(master_list$data$peakArea$wideFiltered %>% filter(sampleType == "sample") %>% nrow()))*sampleMissing
+  #calculate for pqc
+  pqcMissing <- which(is.na(master_list$data$peakArea$wideFiltered %>% filter(sampleType == "pqc") %>% .[[idx_metabolite]])) %>% length()
+  pqcPercent <- (100/(master_list$data$peakArea$wideFiltered %>% filter(sampleType == "pqc") %>% nrow()))*pqcMissing
+  #caculcate for ltr
+  ltrMissing <- which(is.na(master_list$data$peakArea$wideFiltered %>% filter(sampleType == "ltr") %>% .[[idx_metabolite]])) %>% length()
+  ltrPercent <- (100/(master_list$data$peakArea$wideFiltered %>% filter(sampleType == "ltr") %>% nrow()))*ltrMissing
+  
+  #if is a non-SIL standard
+  if(!grepl("SIL", idx_metabolite)){
+    if(samplePercent > 75.5 | pqcPercent > 25.5){ #} | ltrPercent >20){
+      flaggedFeature = c(flaggedFeature, idx_metabolite)
+    }
+  }
+  
+  #if it is a SIL standard
+  if(grepl("SIL", idx_metabolite)){
+    if(samplePercent > 15.5 | pqcPercent > 15.5){ # | ltrPercent >25){
+      flaggedFeature = c(flaggedFeature, idx_metabolite)
+    }
+  }
+  
+}
+
+#create final dataSet
+master_list$data$peakArea$wideFiltered <- master_list$data$peakArea$wideFiltered %>%
+  select(!all_of(flaggedFeature))
+
+```
+
+## record metabolite metadata
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+#keep a record of the metabolite names before and after clean names
+master_list$templates[["metaboliteNames"]] <- tibble(
+  oldNames = master_list$data$peakArea$wideFiltered %>% names(),
+  newNames = master_list$data$peakArea$wideFiltered %>% clean_names() %>% names()
+) %>%
+  add_column(
+    tidyName = gsub("\\..*", "", gsub("-QC", "", gsub("_.*", "", .$oldNames))) %>% toupper(),
+    experiment = NA,
+    polarity = NA,
+    rt = NA,
+    silUsed = NA#,
+    #pqcRSD = NA
+  ) %>%
+  filter(!grepl("sample", oldNames))
+
+#add full name from scout master
+idx_name = (master_list$templates[["metaboliteNames"]][["tidyName"]])[1]
+for(idx_name in (master_list$templates[["metaboliteNames"]][["tidyName"]])){
+  
+  oldName = master_list$templates[["metaboliteNames"]]$oldNames[which(master_list$templates[["metaboliteNames"]]$tidyName == idx_name)]
+  
+  #add experiment type
+  experiment = master_list$templates$msMethod$experiment[which(toupper(master_list$templates$msMethod$metabolite) == toupper(oldName))] %>% toupper() %>% unique()
+  #add to meta table
+     if(length(experiment)==1){
+  master_list$templates[["metaboliteNames"]]$experiment[which(master_list$templates[["metaboliteNames"]]$oldNames == oldName)] <-
+   experiment
+  }
+  
+  #find polarity
+  polarity = master_list$templates$msMethod$polarity[which(toupper(master_list$templates$msMethod$metabolite) == toupper(oldName))] %>% tolower() %>% unique()
+  
+  #add polarity to meta table
+   if(length(polarity)==1){
+  master_list$templates[["metaboliteNames"]]$polarity[which(master_list$templates[["metaboliteNames"]]$oldNames == oldName)] <-
+   polarity
+  }
+
+  #find rt
+  rt = mean(na.rm=TRUE,
+    c(
+    master_list$data$peakRegionFinal[[oldName]] %>% .$peakStartRT %>% as.numeric(), 
+    master_list$data$peakRegionFinal[[oldName]] %>% .$peakEndRT %>% as.numeric())
+  ) %>% round(3)
+ 
+  #add RT to meta table
+  master_list$templates[["metaboliteNames"]]$rt[which(master_list$templates[["metaboliteNames"]]$oldNames == oldName)] <- rt
+  
+  }#close idx_name loop
+
+
+
+```
+
+## Sorted
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+#split into sub-plates
+master_list$data$peakArea[["sorted"]] <- list()
+for(idx_plate in unique(master_list$data$peakArea$wideFiltered$samplePlate)){
+  master_list$data$peakArea$sorted[[idx_plate]] <- master_list$data$peakArea$wideFiltered %>% filter(samplePlate == idx_plate) %>% clean_names()
+}
+
+```
+
+## Impute
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+## 1.4. impute missing values [min/2 imputation (missing assumed < LOD)] -----------------------------------------------------
+#Imputation of the all zero value and missing data 
+#Imputation is completed using x/2, where x is minimum intensity of that feature in the batch
+
+#impute function
+#add LGW impute function
+lgw_impute <- function(x){
+  map(.x = x, .f = ~ (min(.x[.x > 0], na.rm = TRUE))/2) %>%
+    #use replace_na to replace NAs with min/2 value
+    replace_na(
+      data = x %>% mutate_all(~ replace(., . == 0, NA)), #note - replace zeros with NA to make compatible with replace_na()
+      replace = .) #note - replace with list of min/2 values generated from map function in pipe (.)
+}
+
+#set data list
+master_list$data$peakArea$imputed <- list()
+#run loop in all plates
+for(idx_plate in names(master_list$data$peakArea$sorted)){
+  #set all 0, NaN, is.infinate to a NA value for consistency
+  #create matrix 
+  master_list$data$peakArea$imputed[[idx_plate]]  <- master_list$data$peakArea$sorted[[idx_plate]] %>%
+    column_to_rownames("sample_id") %>%
+    select(-contains("sample")) %>%
+    as.matrix()
+  
+  #replace 0, NaN and Inf with NA for imputation (min/2)
+  master_list$data$peakArea$imputed[[idx_plate]][master_list$data$peakArea$imputed[[idx_plate]] ==0] <- NA
+  master_list$data$peakArea$imputed[[idx_plate]][is.infinite(master_list$data$peakArea$imputed[[idx_plate]])] <- NA
+  master_list$data$peakArea$imputed[[idx_plate]][is.nan(master_list$data$peakArea$imputed[[idx_plate]])] <- NA
+  
+  
+  #run lgw_impute function
+  master_list$data$peakArea$imputed[[idx_plate]] <- master_list$data$peakArea$imputed[[idx_plate]] %>% 
+    as.data.frame() %>%
+    lgw_impute() %>%
+    rownames_to_column("sample_id") %>%
+    as_tibble() %>%
+    #samples that are 100% missing (zero/na) have imputation error as min/2(x) is inf. So this step replaces inf with zeros (will be flagged for filter later anyway).
+    mutate_all(function(x) ifelse(is.infinite(x), 1, x)) %>%
+    left_join(
+      master_list$data$peakArea$sorted[[idx_plate]] %>%
+        select(contains("sample")),
+      .,
+      by = "sample_id"
+    ) %>%
+    add_column(
+      sampleDataSource = ".peakArea"
+    ) %>% clean_names()
+}
+
+```
+
+
+## combat raw signal
+
+perform combat batch correction across plates in event of plate to plate variation
+
+```{r}
+
+# combat takes into account all features in the algorithm. Because internal standards and samples are added at different stages their batch correction needs may differ. I have factored this into the next steps
+
+master_list$data$peakArea$combat <- list()
+
+# for SIL
+dataImputed <- master_list$data$peakArea$imputed %>% 
+  bind_rows() %>%
+  select(
+    contains("sample"),
+    contains("_sil", ignore.case = TRUE)
+  )
+#data prep (samples in cols and metabolites in rows)
+
+dataPreCombat <- dataImputed %>%
+  select(sample_id, !contains("sample")) %>%
+  #offset by constant factor of 1 for lof step later
+   mutate(
+    across(where(is.numeric), ~ .x+1)
+    ) %>%
+  column_to_rownames("sample_id") %>%
+  t() %>%
+  log10()
+
+#extract batch
+batch = dataImputed %>%
+  .$sample_plate
+
+#perform batch correction
+dataPostCombat <- sva::ComBat(
+  dat = as.matrix(dataPreCombat),
+  batch = batch,
+  mod = NULL,           # or NULL
+  par.prior = TRUE,
+  prior.plots = FALSE,
+  mean.only = FALSE          # set TRUE if you only want mean-shift correction
+  #ref.batch = 1
+)
+
+# sometimes combat gives neg values, offset factor constant to remove this option
+for(idx_metaboliteRow in 1:nrow(dataPostCombat)){
+  minRow = min(dataPostCombat[idx_metaboliteRow,], na.rm = TRUE)
+  if(minRow < 0){
+    dataPostCombat[idx_metaboliteRow, ] <- dataPostCombat[idx_metaboliteRow, ] + abs(minRow*2)   
+  }
+}
+
+# unlog data
+dataPostCombat2 <- left_join(
+  by = "sample_id",
+  dataImputed %>% select(contains("sample")),
+  ((10^dataPostCombat) - 1) %>% # per-feature log nd offset removal
+    round(3) %>%
+    t(.) %>%
+    as.data.frame() %>%
+    lgw_impute() %>%
+    rownames_to_column("sample_id") %>%
+    as_tibble()
+)
+
+
+# repeat for non Sil data
+# for SIL
+dataImputed <- master_list$data$peakArea$imputed %>% 
+  bind_rows() %>%
+  select(
+    contains("sample"),
+    !contains("_sil", ignore.case = TRUE)
+  )
+#data prep (samples in cols and metabolites in rows)
+
+dataPreCombat <- dataImputed %>%
+  select(sample_id, !contains("sample")) %>%
+  #offset by constant factor of 1 for lof step later
+   mutate(
+    across(where(is.numeric), ~ .x+1)
+    ) %>%
+  column_to_rownames("sample_id") %>%
+  t() %>%
+  log10()
+
+#extract batch
+batch = dataImputed %>%
+  .$sample_plate
+
+#perform batch correction
+dataPostCombat <- sva::ComBat(
+  dat = as.matrix(dataPreCombat),
+  batch = batch,
+  mod = NULL,           # or NULL
+  par.prior = TRUE,
+  prior.plots = FALSE,
+  mean.only = FALSE          # set TRUE if you only want mean-shift correction
+  #ref.batch = 1
+)
+
+# sometimes combat gives neg values, offset factor constant to remove this option
+for(idx_metaboliteRow in 1:nrow(dataPostCombat)){
+  minRow = min(dataPostCombat[idx_metaboliteRow,], na.rm = TRUE)
+  if(minRow < 0){
+    dataPostCombat[idx_metaboliteRow, ] <- dataPostCombat[idx_metaboliteRow, ] + abs(minRow*2)   
+  }
+}
+
+# unlog data
+dataPostCombat2 <- dataPostCombat2 %>%
+  left_join(
+  by = "sample_id",
+  .,
+  ((10^dataPostCombat) - 1) %>% # per-feature log nd offset removal
+    round(3) %>%
+    t(.) %>%
+    as.data.frame() %>%
+    lgw_impute() %>%
+    rownames_to_column("sample_id") %>%
+    as_tibble()
+) %>%
+  select(
+    master_list$data$peakArea$imputed %>% 
+      bind_rows() %>%
+      names()
+  )
+
+
+#return to per plate in master data
+
+ 
+for(idx_plate in master_list$data$peakArea$impute %>% names()){
+  master_list$data$peakArea$combat[[idx_plate]] <- dataPostCombat2 %>%
+    filter(sample_plate == idx_plate)
+}
+
+
+```
+
+
+## statTarget raw signal
+
+```{r}
+
+## 1.5. statTarget signalDrift | batch correction ----------------------------
+
+#create batch correction directory
+
+skylineR_directory <- paste0(master_list$project_details$project_dir, "\\", master_list$project_details$wash)
+
+#data
+
+if(!dir.exists(paste0(skylineR_directory, "\\statTarget"))){
+  dir.create(paste0(skylineR_directory, "\\statTarget"))
+}
+
+
+#set qc-type
+master_list$project_details$statTarget_qc_type <- "hold"
+
+while(master_list$project_details$statTarget_qc_type != "LTR" & master_list$project_details$statTarget_qc_type != "VLTR" & master_list$project_details$statTarget_qc_type != "PQC"){
+
+master_list$project_details$statTarget_qc_type <- dlgInput("which qc type will be used for statTarget", "VLTR/LTR/PQC - default is PQC")$res
+
+}
+
+#create data list 
+FUNC_list <- list()
+FUNC_list$project_dir <- paste0(skylineR_directory,
+                                "\\statTarget")
+
+#set up project folders for batch correct
+#create directories 
+if(!dir.exists(paste0(FUNC_list$project_dir,"/", Sys.Date(), "_sigCorResults"))){
+  dir.create(paste0(FUNC_list$project_dir,"/", Sys.Date(), "_sigCorResults"))
+}
+
+setwd(paste0(FUNC_list$project_dir,"/", Sys.Date(), "_sigCorResults")) 
+
+#apply on peakArea data (post-impute)
+#set master data for function
+FUNC_list$master_data <- bind_rows(master_list$data$peakArea$imputed)
+#set_qc type used for signal drift correction
+FUNC_list$master_data[["sample_type"]] <- "sample"
+FUNC_list$master_data[["sample_type"]][which(tolower(FUNC_list$master_data[["sample_type_factor"]]) == tolower(master_list$project_details$statTarget_qc_type))] <- "qc"
+
+#flag QCs that have failed because of mis-injection (very low signal (<10 % of median))
+temp.rowSums <- FUNC_list$master_data %>%
+  filter(sample_type_factor == master_list$project_details$statTarget_qc_type) %>%
+  select(!contains("sample")) %>%
+  rowSums()
+#find file names
+temp.qcFail <- (FUNC_list$master_data  %>%
+                  filter(sample_type_factor == master_list$project_details$statTarget_qc_type) %>%
+                  .$sample_name)[which(temp.rowSums < median(temp.rowSums*0.1))]
+
+#reset failed QC injections to "sample" so is not included in statTarget algorithm
+FUNC_list$master_data[["sample_type"]][which(FUNC_list$master_data[["sample_name"]] %in% temp.qcFail)] <- "sample"
+
+
+#flag low number of QCs using ratio of QC to total samples
+for(idxPlate in names(master_list$data$peakArea$imputed)){
+  
+  plateData <- FUNC_list$master_data %>% filter(sample_plate == idxPlate)
+  totalSamples <- length(plateData %>% .$sample_type_factor)
+  requiredQCs <- (6/96) # Minimum of 6 QC for 96 samples
+  qcCount <- length(which(tolower(plateData$sample_type) == "qc"))
+  qcCountRatio <- (qcCount/totalSamples)
+  dlg_message(paste0(idxPlate, " has ", qcCount, " ", master_list$project_details$statTarget_qc_type, "s for use by statTarget"), "ok")
+  
+  if(qcCountRatio < requiredQCs || qcCount < 2){
+    dlg_message(paste0("You do not have enough QCs for statTarget on plate ",idxPlate,". Stopping qcCheckeR. Please remove plate ",idxPlate," and re-run chunk."), type = 'ok')
+    FUNC_list$corrected_data$data <- NULL
+  }
+}
+
+
+#exclude failed qcs (see chunk above to id failed QCs)
+FUNC_list$master_data[["sample_type"]]
+
+#set metabolite list
+FUNC_list$metabolite_list <- master_list$data$peakArea$imputed %>%
+  bind_rows() %>%
+  select(-contains("sample")) %>%
+  names()
+
+#### 1.5.a. create the required metadata file (PhenoFile) for statTarget::shiftCor---------------------------------------------------------------
+FUNC_list$PhenoFile <- list()
+# build PhenoFile file template
+FUNC_list$PhenoFile$template <- FUNC_list$master_data %>% 
+  select(all_of("sample_name")) %>%
+  dplyr::rename(sample = all_of("sample_name")) %>%
+  add_column(FUNC_list$master_data %>% 
+               select(all_of("sample_name"))) %>%
+  add_column(FUNC_list$master_data %>%
+               select(all_of("sample_plate"))) %>%
+  add_column(FUNC_list$master_data %>%
+               select(all_of("sample_type"))) %>%
+  dplyr::rename(class = all_of("sample_type")) %>% 
+  add_column(FUNC_list$master_data %>%
+               select(all_of("sample_type"))) %>%
+  add_column(FUNC_list$master_data %>%
+               select(all_of("sample_run_index")))
+
+#### arrange by run order
+FUNC_list$PhenoFile$template <- FUNC_list$PhenoFile$template %>%
+  arrange_at("sample_run_index")
+
+#### QC placement
+#stat target needs a qc at postion 1 and last position in the run. Default run order takes this into account, but some datasets this is not the case
+#in this instance this section of code artificially moves the first and last qc into position. It is completed for each batch.
+
+FUNC_list$PhenoFile$template_qc_order <- NULL
+qc_idx <- NULL
+for(idx_batch in FUNC_list$PhenoFile$template %>% 
+    select(all_of("sample_plate")) %>%
+    unique() %>%
+    as.matrix() %>%
+    c()
+){
+  
+  #create a temp tibble batch specific
+  loop_temp_data <- FUNC_list$PhenoFile$template %>%
+    filter(!!as.symbol("sample_plate") == idx_batch)
+  
+  #ensure a sample_type "qc" is "first" and "last" in the worklist order. Required for statTarget::shiftCor
+  loop_qc_idx <- which(loop_temp_data %>% 
+                         select(all_of("sample_type")) 
+                       == "qc")
+  # browser()
+  #if qc is not run before the samples - artificially move first qc to run order position 1. This is required for statTarget
+  if(loop_qc_idx[1] > 1){
+    loop_temp_data <- loop_temp_data %>%
+      slice(loop_qc_idx[1],1:nrow(loop_temp_data)) %>%
+      slice(-(loop_qc_idx[1]+1))
+  }
+  
+  #create last qc
+  if(loop_qc_idx[length(loop_qc_idx)] < nrow(loop_temp_data)){
+    loop_temp_data <- loop_temp_data %>%
+      slice(1:nrow(loop_temp_data), loop_qc_idx[length(loop_qc_idx)]) %>%
+      slice(-loop_qc_idx[length(loop_qc_idx)])
+  }
+  
+  #create total qc_idx for use later
+  qc_idx <- c(qc_idx,
+              loop_qc_idx)
+  
+  FUNC_list$PhenoFile$template_qc_order <- bind_rows(FUNC_list$PhenoFile$template_qc_order,
+                                                     loop_temp_data)
+  
+}
+
+#set sample column for statTarget requires "QC" in QC rows, and sample name in sample rows
+FUNC_list$PhenoFile$template_qc_order$sample[which(FUNC_list$PhenoFile$template_qc_order %>% 
+                                                     select(all_of("sample_type")) == "qc")] <- paste0("QC", rep(1:length(qc_idx)))
+FUNC_list$PhenoFile$template_qc_order$sample[which(FUNC_list$PhenoFile$template_qc_order %>% 
+                                                     select(all_of("sample_type")) == "sample")] <- paste0("sample", 
+                                                                                                           rep(1:(nrow(FUNC_list$PhenoFile$template_qc_order)-length(qc_idx))))
+#set NA for class column in rows that are NA
+FUNC_list$PhenoFile$template_qc_order$class[which(FUNC_list$PhenoFile$template_qc_order %>% 
+                                                    select(all_of("sample_type")) == "qc")] <- NA
+
+#rename column header for statTarget template
+FUNC_list$PhenoFile$template_sample_id <- FUNC_list$PhenoFile$template_qc_order %>% 
+  dplyr::rename(sample_id = all_of("sample_name"),
+                batch = all_of("sample_plate"),
+                order = all_of("sample_run_index")) %>%
+  select(sample, batch, class, order, sample_id)
+
+#confirm order columnn is continuous
+FUNC_list$PhenoFile$template_sample_id$order <- c(1:nrow(FUNC_list$PhenoFile$template_sample_id))
+
+#set batch/plate - numeric value starting at 1 - max number of plates/batch
+temp_batch <- 1
+for(idx_batch_set in unique(FUNC_list$PhenoFile$template_sample_id$batch)){
+  FUNC_list$PhenoFile$template_sample_id$batch[which(FUNC_list$PhenoFile$template_sample_id$batch == idx_batch_set)] <- temp_batch
+  temp_batch <- temp_batch + 1
+}
+
+FUNC_list$PhenoFile$template_sample_id$batch <- FUNC_list$PhenoFile$template_sample_id$batch %>%
+  as.numeric()
+
+#final Phenofile
+FUNC_list$PhenoFile$PhenoFileOut <- FUNC_list$PhenoFile$template_sample_id %>%
+  select(-sample_id)
+
+# write out as csv (requirement for statTarget::shiftCor)
+write_csv(x = FUNC_list$PhenoFile$PhenoFileOut,
+          file = paste(getwd(), "/PhenoFile.csv", sep="")
+)
+
+#### 1.5.b. create data for statTarget::shiftCor  -----------------------------------
+FUNC_list$ProfileFile <- list()
+
+#must have samples in columns and metabolites in rows
+FUNC_list$ProfileFile$template  <- FUNC_list$master_data %>%
+  select(all_of("sample_name"),
+         all_of(FUNC_list$metabolite_list)) %>%
+  dplyr::rename(sample_id = !!"sample_name")
+
+#match run order to PhenoFile
+FUNC_list$ProfileFile$template_qc_order <- FUNC_list$PhenoFile$template_sample_id %>%
+  select(sample, sample_id) %>%
+  left_join(FUNC_list$ProfileFile$template, by = "sample_id") %>%
+  select(-sample_id)
+
+#transpose tibble for statTarget
+FUNC_list$ProfileFile$ProfileFile <- as_tibble(
+  cbind(nms = names(FUNC_list$ProfileFile$template_qc_order), 
+        t(FUNC_list$ProfileFile$template_qc_order))
+) %>%
+  setNames(.[1,]) %>%
+  dplyr::rename(name = sample) %>%
+  filter(name != "sample") %>%
+  mutate(across(!contains("name", ignore.case = FALSE), as.numeric))
+
+#create a metabolite list and create metabolite code
+FUNC_list$ProfileFile$metabolite_list <- FUNC_list$ProfileFile$ProfileFile %>%
+  select(name) %>%
+  add_column(metabolite_code = paste0("M", rep(1:nrow(FUNC_list$ProfileFile$ProfileFile))))
+
+#add metabolite code to data
+FUNC_list$ProfileFile$ProfileFile <- left_join(
+  FUNC_list$ProfileFile$metabolite_list,
+  FUNC_list$ProfileFile$ProfileFile,
+  by = "name") %>%
+  select(-name) %>%
+  dplyr::rename(name = metabolite_code)
+
+# write out as csv (requirement for statTarget::shiftCor)
+write_csv(x = FUNC_list$ProfileFile$ProfileFile, 
+          file = paste0(getwd(), "/ProfileFile.csv")
+)
+
+#script files
+samPeno <- paste(getwd(), "\\PhenoFile.csv", sep="")
+samFile <- paste(getwd(),  "\\ProfileFile.csv", sep="")
+
+#create_directories
+if(!dir.exists(paste(getwd(), "shiftCor", sep = "\\"))){
+  dir.create(paste(getwd(), "shiftCor", sep = "\\"))
+}
+
+#and subDir
+if(!dir.exists(paste(getwd(), "shiftCor", "Before_shiftCor", sep = "\\"))){
+  dir.create(paste(getwd(), "shiftCor", "Before_shiftCor", sep = "\\"))
+}
+
+
+#check nchar
+if(nchar(paste(getwd(), "shiftCor", "Before_shiftCor", sep = "\\")) >= 225){
+  svDialogs::dlg_message(paste0("WARNING: your path length is ", nchar(paste(getwd(), "shiftCor", "Before_shiftCor", sep = "\\")), " characters. Beware - windows path limit is 260, you may experience a path error. If chunk errors, relocate project to a shorter path (e.g. desktop) for processing"))
+}
+
+                 
+#run statTarget
+statTarget::shiftCor(samPeno = samPeno,
+                     samFile =  samFile,
+                     Frule = 0,
+                     ntree = 500,
+                     MLmethod = 'QCRFSC',
+                     imputeM = "minHalf",
+                     plot = FALSE,
+                     coCV = 10000
+)
+
+#read back in csv
+
+FUNC_list$corrected_data$data <- read_csv(
+  paste0(getwd(), "/statTarget/shiftCor/After_shiftCor/shift_all_cor.csv"),
+  show_col_types = FALSE)
+
+#different versions of r/statTarget appear to produce shift_all_cor in different orientations. Some have metabolites in columns some in rows. Unsure as to why, I did not find out which package inside statTarget was producing this outcome.
+#the next phase fixes this by performing a check as to the orientation of the csv
+
+#older packages (metab lites in rows)
+if("sample1" %in% colnames(FUNC_list$corrected_data$data)){
+  FUNC_list$corrected_data$data  <- FUNC_list$corrected_data$data  %>%
+    filter(sample != "class") %>%
+    dplyr::rename(name = sample) %>%
+    mutate(across(!contains("name", ignore.case = FALSE), as.numeric))
+}
+
+#updated packages (metabolites in columns)
+if("M1" %in% colnames(FUNC_list$corrected_data$data)){
+  FUNC_list$corrected_data$data  <- FUNC_list$corrected_data$data  %>%
+    t() %>% data.frame() %>%
+    rownames_to_column() %>% 
+    as_tibble() %>%
+    setNames(.[1,]) %>%
+    filter(sample != "class" & sample != "sample" ) %>%
+    dplyr::rename(name = sample) %>%
+    mutate(across(!contains("name", ignore.case = FALSE), as.numeric))
+}
+
+#recombine with sample filenames and lipid names
+FUNC_list$corrected_data$data_transposed <- right_join(
+  FUNC_list$ProfileFile$metabolite_list %>% dplyr::rename(lipid = metabolite_code),
+  FUNC_list$corrected_data$data %>% dplyr::rename(lipid = name),
+  by = "lipid"
+) %>%
+  select(-lipid) %>%
+  as.matrix() %>%
+  t() %>% data.frame() %>%
+  rownames_to_column() %>% 
+  as_tibble() %>%
+  setNames(.[1,]) %>%
+  filter(name!="name") %>%
+  mutate(across(!contains("name", ignore.case = FALSE), as.numeric)) %>%
+  dplyr::rename(sample = name) %>%
+  left_join(x = FUNC_list$PhenoFile$template_sample_id,
+            y = .,
+            by = "sample") %>%
+  dplyr::rename(!!"sample_name" := sample_id) %>%
+  left_join(
+    x = FUNC_list$master_data %>%
+      select(contains("sample")),
+    y = .,
+    by = "sample_name"
+  ) %>%
+  select(-all_of(c("sample", "batch", "class", "order")))
+
+#### 1.5.c. post-statTarget peak area mean adjustment ------------------------------------
+#because the statTarget correction changes the output signal area of the lipids, this next section re-scales the values based on the change (ratio) between pre and post corrected signal mean in the QCs
+#step one - get mean value for each metabolite in the QC samples - pre-single drift corrected data 
+FUNC_list$corrected_data$qc_means <- FUNC_list$master_data %>%
+  filter(!!as.symbol("sample_type") == "qc") %>%
+  select(-contains("sample")) %>%
+  colMeans() %>%
+  as_tibble() %>%
+  dplyr::rename(original_mean = value) %>%
+  add_column(metabolite = FUNC_list$master_data %>%
+               select(-contains("sample")) %>%
+               names(), 
+             .before = "original_mean") %>%
+  #step two - get mean value for each metabolite in the QC samples - post-single drift corrected data 
+  left_join(.,
+            FUNC_list$corrected_data$data_transposed %>%
+              filter(!!as.symbol("sample_type") == "qc") %>%
+              select(-contains("sample")) %>%
+              colMeans() %>%
+              data.frame %>%
+              rownames_to_column() %>%
+              as_tibble() %>%
+              setNames(c("metabolite", "corrected_mean")),
+            by = "metabolite") %>%
+  #step three - create ratio factor for concentration adjustment
+  add_column(correction_ratio = .$corrected_mean/.$original_mean)
+
+#step 4 - adjust data concentrations
+FUNC_list$corrected_data$data_qc_mean_adjusted <- FUNC_list$corrected_data$data_transposed
+#run loop
+for(idx_metabolite in FUNC_list$corrected_data$qc_means$metabolite){
+  FUNC_list$corrected_data$data_qc_mean_adjusted[[idx_metabolite]] <- FUNC_list$corrected_data$data_qc_mean_adjusted[[idx_metabolite]]/
+    FUNC_list$corrected_data$qc_means[["correction_ratio"]][which(FUNC_list$corrected_data$qc_means[["metabolite"]]==idx_metabolite)]
+}
+
+#return QC type to ltr data
+FUNC_DATA_qc_type <- unique(bind_rows(master_list$data$peakArea$sorted)$sample_type_factor[which(bind_rows(master_list$data$peakArea$sorted)$sample_type =="qc")]) %>% as.character()
+FUNC_list$corrected_data$data_qc_mean_adjusted$sample_type <- FUNC_list$corrected_data$data_qc_mean_adjusted$sample_type_factor
+#FUNC_list$corrected_data$data_qc_mean_adjusted$sample_type[which(FUNC_list$corrected_data$data_qc_mean_adjusted$sample_type_factor == FUNC_DATA_qc_type)] <- "qc"
+
+FUNC_list
+
+#list for storing signal drift corrected data (per project)
+master_list$data$peakArea$statTarget <- list()
+#loop to back into plate elements of list
+for(idx_batch in unique(FUNC_list$corrected_data$data_qc_mean_adjusted$sample_plate)){
+  master_list$data$peakArea$statTarget[[idx_batch]] <- FUNC_list$corrected_data$data_qc_mean_adjusted %>%
+    filter(sample_plate == idx_batch) %>%
+    mutate(across(where(is.numeric), round, 0))
+  #set dataSource
+  master_list$data$peakArea$statTarget[[idx_batch]]$sample_data_source <- "peakArea.statTarget"
+}
+
+#reset wd to project dir
+setwd(master_list$project_details$project_dir)
+
+#remove extra files
+rm(list = c(ls()[which(ls() != "master_list")]))
+
+
+```
+
+
+
+# peakResponse
+
+## for matched internal standards
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+#set up objects lists for data storage
+master_list$data$response <- list()
+
+#reset table
+master_list$templates$metaboliteNames$matchedSilUsed <- NA; master_list$templates$metaboliteNames$silUsed_imputed <- NA; master_list$templates$metaboliteNames$silUsed_combat <- NA; master_list$templates$metaboliteNames$silUsed_statTarget <- NA; master_list$templates$metaboliteNames$silUsed <- NA; master_list$templates$metaboliteNames
+
+
+
+#master_list$templates$metaboliteNames[["silUsed"]] = NA
+
+idx_dataType = "imputed"
+for(idx_dataType in c("imputed", "combat", "statTarget")){
+  
+  master_list$data$response[[idx_dataType]] <- list()
+  
+  #first calculate response for matched internal standards
+  silList <- master_list$data$peakArea[[idx_dataType]] %>% 
+    bind_rows() %>%
+    select(contains("_sil")) %>%
+    names()
+  
+  #loopData 
+  loopData <- master_list$data$peakArea[[idx_dataType]] %>%
+    bind_rows()
+  
+  idx_sil = silList[15]
+  for(idx_sil in silList){
+    #print(idx_sil)
+    
+    #find target
+    loopTarget <- gsub("_sil.*", "", idx_sil) 
+    
+   
+    
+    if(length(which(names(loopData) == loopTarget)) == 1){
+      
+      #store SIL used  
+      master_list$templates$metaboliteNames[[paste0("silUsed_", idx_dataType)]][which(master_list$templates$metaboliteNames$newNames == loopTarget)] <- 
+        master_list$templates$metaboliteNames$oldNames[which(master_list$templates$metaboliteNames$newNames ==  idx_sil)]
+      
+      
+      #turn matchedSilused to TRUE
+      master_list$templates$metaboliteNames$matchedSilUsed[which(master_list$templates$metaboliteNames$newNames == loopTarget)] <- 
+        TRUE
+      
+
+  for(idx_plate in names(master_list$data$peakArea[[idx_dataType]])){
+    
+    #create dataframe for first iteration of loop
+    if(is.null(master_list$data$response[[idx_dataType]][[idx_plate]])){
+    
+    master_list$data$response[[idx_dataType]][[idx_plate]] <- master_list$data$peakArea[[idx_dataType]][[idx_plate]] %>% 
+      select(contains("sample")) 
+    
+    #change data source
+    master_list$data$response[[idx_dataType]][[idx_plate]]$sample_data_source <- "imputeResponse"
+    
+    
+    }# is.null
+    
+    
+    #set loop data
+    loopData <- master_list$data$peakArea[[idx_dataType]][[idx_plate]]
+    
+    #get metabolte target data
+    loopTargetData <- loopData[[loopTarget]]
+    
+    #getSil data
+    loopSilData <- loopData[[idx_sil]]
+    
+    #create response
+    loopResponse <- tibble(
+      loopResponse = loopTargetData/loopSilData
+    ) %>% rename_with(~loopTarget)
+    
+    #store data
+    master_list$data$response[[idx_dataType]][[idx_plate]] <- master_list$data$response[[idx_dataType]][[idx_plate]] %>%
+      bind_cols(
+        loopResponse
+      )
+        
+        
+      } #idxPlate
+      
+    } #idx_sil
+    
+  } #idx_dataType
+  
+} #if
+  
+
+master_list$templates$metaboliteNames
+
+
+```
+
+### for surrogate internal standards
+
+```{r}
+
+#get list of metabolites
+metaboliteList <- master_list$templates$metaboliteNames[-which(master_list$templates$metaboliteNames$matchedSilUsed == TRUE),] %>%
+  filter(!grepl("sil", newNames, ignore.case = TRUE)) %>% 
+  .$newNames
+
+
+  
+idx_dataType = "imputed"
+for(idx_dataType in c("imputed", "combat", "statTarget")){
+  
+  #print(idx_dataType)
+  
+
+  #set loop data
+  loopData <- master_list$data$peakArea[[idx_dataType]] %>% bind_rows()
+  loopDataQC <- loopData %>% filter(sample_type == "pqc")
+  
+  #find best surrogate based on PQC rsd
+  idx_metabolite = metaboliteList[1]
+  for(idx_metabolite in metaboliteList){
+    #print(idx_metabolite)
+    #get experiment
+    metaboliteExperiment <- master_list$templates$metaboliteNames$experiment[which(master_list$templates$metaboliteNames$newNames == idx_metabolite)]
+    #get polarity
+    metabolitePolarity <- master_list$templates$metaboliteNames$polarity[which(master_list$templates$metaboliteNames$newNames == idx_metabolite)]
+    #getRT
+    metaboliteRT <- master_list$templates$metaboliteNames$rt[which(master_list$templates$metaboliteNames$newNames == idx_metabolite)]
+    
+    
+    #get loop qc data per metabolite
+    loopMetaboliteData <- loopDataQC[[idx_metabolite]]
+    
+    #loop through sil using a while loop
+    rsdOut <- NULL #for testing while loop
+    minRSD <- 100 #for testing while loop
+    rtBracket = 1.5 #for testing while loop
+    
+    while (is.null(rsdOut) & minRSD > 30 & rtBracket < 5.1){
+      #nrow(as_tibble(rsdOut)) != length(silList)) {
+      
+      idx_sil = silList[1]
+      for(idx_sil in (silList)){
+        #get experiment
+        silExperiment <- master_list$templates$metaboliteNames$experiment[which(master_list$templates$metaboliteNames$newNames == idx_sil)]
+        #get polarity
+        silPolarity <- master_list$templates$metaboliteNames$polarity[which(master_list$templates$metaboliteNames$newNames == idx_sil)]
+        #getRT
+        silRT <- master_list$templates$metaboliteNames$rt[which(master_list$templates$metaboliteNames$newNames == idx_sil)]
+        
+        #if based on range and experiment type
+        if(metaboliteExperiment == silExperiment & metabolitePolarity == silPolarity & silRT > (metaboliteRT - rtBracket) & silRT < (metaboliteRT + rtBracket)){
+          
+          #print(idx_sil)
+          
+          loopSilData <- loopDataQC[[idx_sil]]
+          loopResponse <- loopMetaboliteData/loopSilData
+          loopRSD <- ((sd(loopResponse, na.rm = TRUE)*100)/mean(loopResponse, na.rm = TRUE)) %>% round(2)
+          
+          rsdOut <- rbind(rsdOut, 
+                          (c(idx_sil, loopRSD))
+          )
+        }
+      }
+      #if not matching sil then reduce requirement for experiment match
+      if(is.null(rsdOut) == TRUE){
+        for(idx_sil in (silList)){
+          #get polarity
+          silPolarity <- master_list$templates$metaboliteNames$polarity[which(master_list$templates$metaboliteNames$newNames == idx_sil)]
+          #getRT
+          silRT <- master_list$templates$metaboliteNames$rt[which(master_list$templates$metaboliteNames$newNames == idx_sil)]
+          
+          if(metabolitePolarity == silPolarity & silRT > (metaboliteRT - rtBracket) & silRT < (metaboliteRT + rtBracket)){
+            
+            #print(idx_sil)
+            loopSilData <- loopDataQC[[idx_sil]]
+            loopResponse <- loopMetaboliteData/loopSilData
+            loopRSD <- ((sd(loopResponse, na.rm = TRUE)*100)/mean(loopResponse, na.rm = TRUE)) %>% round(1)
+            
+            rsdOut <- rbind(rsdOut, 
+                            (c(idx_sil, loopRSD))
+            )
+          }
+        }
+      }
+      
+      #save target SIL
+      if(nrow(rsdOut %>% as_tibble) > 0){minRSD <- rsdOut %>% as_tibble() %>% .$V2 %>% as.numeric() %>% min(na.rm = TRUE)}
+      rtBracket <- rtBracket + 0.5
+      
+    }#while
+    
+    if(!is.null(rsdOut)){
+      
+      #record sil choice and rsd
+      sil_choice <- (rsdOut %>% as_tibble() %>% mutate(V2 = as.numeric(V2)) %>% arrange(V2) %>% .$V1)[1]
+      #rsd_value <- (rsdOut %>% as_tibble() %>% mutate(V2 = as.numeric(V2)) %>% arrange(V2) %>% .$V2)[1]
+      
+      #create response for imputed data
+      for(idx_plate in names(master_list$data$response[[idx_dataType]])){
+        master_list$data$response[[idx_dataType]][[idx_plate]] <- master_list$data$response[[idx_dataType]][[idx_plate]] %>%
+          add_column(
+            new_metabolite = master_list$data$peakArea[[idx_dataType]][[idx_plate]][[idx_metabolite]]/master_list$data$peakArea[[idx_dataType]][[idx_plate]][[sil_choice]]
+          ) %>%
+          rename_with(~idx_metabolite, "new_metabolite") 
+      }
+      
+      
+      #add sil_choice to template
+      master_list$templates$metaboliteNames[[paste0("silUsed_", idx_dataType)]][which(master_list$templates$metaboliteNames$newNames == idx_metabolite)] <- 
+        master_list$templates$metaboliteNames$oldNames[which(master_list$templates$metaboliteNames$newNames ==  sil_choice)]
+      
+      #turn matchedSilused to TRUE
+      master_list$templates$metaboliteNames$matchedSilUsed[which(master_list$templates$metaboliteNames$newNames == idx_metabolite)] <- 
+        FALSE
+      
+    } #!is.null
+    
+  } #idx_metabolite
+  
+} #for idx_dataType
+  
+master_list$templates$metaboliteNames
+
+```
+
+
+
+##RSD calculator
+
+calculate rsd values of PQC
+
+```{r}
+
+rsd <- function(x) {
+  if (!is.numeric(x)) stop("Input must be numeric")
+  mean_x <- mean(x, na.rm = TRUE)
+  sd_x <- sd(x, na.rm = TRUE)
+  rsd <- (sd_x / mean_x) * 100
+  return(round(rsd, 1))
+}
+
+rsdOut <- list()
+
+idx_dataType = "imputed"
+for(idx_dataType in c("imputed", "combat", "statTarget")){
+  
+  rsdOut[[idx_dataType]] <- list()
+  
+  metaboliteList = master_list$data$response[[idx_dataType]] %>% bind_rows() %>% select(!contains("sample")) %>% names()
+  
+  idx_metabolite = metaboliteList[1]
+  
+  for(idx_metabolite in metaboliteList){
+    
+  #get sil used for target metabolite
+  sil_used = master_list$templates$metaboliteNames[[paste0("silUsed_", idx_dataType)]][which(master_list$templates$metaboliteNames$newNames == idx_metabolite)]
+  
+  #convert to janitor:clean_names style
+  #if(!is.na(sil_used)){
+     sil_used = master_list$templates$metaboliteNames$newNames[which(master_list$templates$metaboliteNames$oldNames == sil_used)]
+  #}
+  
+  rsdOut[[idx_dataType]] <- bind_rows(
+    rsdOut[[idx_dataType]],
+    tibble(
+      newNames = idx_metabolite,
+      peakAreaRSD = master_list$data$peakArea[[idx_dataType]] %>% 
+        bind_rows() %>%
+        filter(sample_type == "pqc") %>%
+        .[[idx_metabolite]] %>%
+        rsd(.),
+      silRSD = master_list$data$peakArea[[idx_dataType]] %>% 
+        bind_rows() %>%
+        filter(sample_type == "pqc") %>%
+        .[[sil_used]] %>%
+        rsd(.),
+      responseRSD = master_list$data$response[[idx_dataType]] %>% 
+        bind_rows() %>%
+        filter(sample_type == "pqc") %>%
+        .[[idx_metabolite]] %>%
+        rsd(.)
+    )
+  )
+  
+  } #idx_metabolite
+
+}#idx_dataType
+
+master_list$summary_tables[["rsdOut"]] <-  rsdOut
+
+```
+
+
+#.
+# review SIL internal standard match
+## export template
+
+*USER INPUT REQUIRED*
+
+opportunity to swap out some internal standards
+
+```{r}
+
+if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/internalStandardSelection/"))){
+  dir.create(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/internalStandardSelection/"))
+}
+
+
+ write_csv(
+   master_list$templates$metaboliteNames %>%
+     select(-silUsed_imputed, -silUsed_combat, -silUsed) %>%
+     left_join(
+       .,
+       master_list$summary_tables$rsdOut$statTarget, 
+       by = "newNames"
+     ) %>% 
+     filter(!grepl("sil", newNames)) %>%
+     arrange(desc(matchedSilUsed), oldNames),
+   file = paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/internalStandardSelection/",
+                 Sys.Date(), "_internStandards_forReview.csv")
+ )
+
+
+```
+
+*USER INPUT REQUIRED*
+
+edit and read in template
+
+```{r}
+
+#make any edits to the silUsed column and then change file name to edited
+
+#make sure any names for IS use the tidyName column
+
+updated_metaboliteNames <- read_csv(file = paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/internalStandardSelection/",
+                 Sys.Date(), "_internStandards_edited.csv")
+                 )
+
+#update master list
+
+master_list$templates$metaboliteNames <- master_list$templates$metaboliteNames %>%
+  select(-silUsed_statTarget, -silUsed) %>%
+  left_join(
+    by = "tidyName",
+    updated_metaboliteNames %>% 
+      select(tidyName, silUsed_statTarget)
+  ) 
+
+
+```
+
+
+# control charts
+
+## run order plots
+
+```{r}
+
+if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/controlCharts/"))){
+  dir.create(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/controlCharts/"))
+}
+
+#add a vairable that adapts page width for number of plates
+
+pageWidth <- length(master_list$project_details$plateList)
+
+ #open pdf device
+  pdf(
+    onefile = TRUE, width = (15 + pageWidth), height = 10,
+    file = paste0(
+                  master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/controlCharts/", Sys.Date(), "_", master_list$project_details$project_name, "_SPE_", master_list$project_details$wash, "_all_metabolites_controlCharts.pdf"
+                
+    )
+  )
+  
+  
+ 
+  
+idx_metabolite = "x3_haa"
+for(idx_metabolite in (master_list$data$response$statTarget %>% bind_rows() %>% select(!contains("sample")) %>% names())){
+  
+  
+  # --------------------------------------------------------------
+  ## Data preparatoion
+  # -------------------------------------------------------------- 
+  
+  ### for peak area
+  
+  #extract SIL to plot
+  plotSIL <- master_list$templates$metaboliteNames$silUsed_statTarget[which(master_list$templates$metaboliteNames$newNames == idx_metabolite)]
+  #get janitor::tidyName
+  plotSIL <- master_list$templates$metaboliteNames$newNames[which(master_list$templates$metaboliteNames$oldNames == plotSIL)]
+  
+  # get peak areas to plot
+  plotArea <- master_list$data$peakArea$imputed %>% bind_rows() %>% 
+    select(sample_run_index, sample_name, sample_type, sample_plate, all_of(idx_metabolite), all_of(plotSIL)) %>%
+    setNames(c("sample_run_index", "sample_name", "sample_type", "sample_plate", "area", "silArea")) %>%
+    left_join(
+      .,
+      master_list$data$response$impute %>% bind_rows() %>% 
+        select(sample_name, all_of(idx_metabolite)) %>% setNames(c("sample_name", "response")),
+      by = "sample_name"
+    )
+  
+  
+  #combine into plotArea
+  plotData <- plotArea %>%
+    filter(sample_type != "vltr") %>%
+    pivot_longer(
+      cols = c("area", 
+               "silArea",  
+               "response"),
+      names_to = "dataType",
+      values_to = "value"
+    ) 
+  
+  pqcData = plotData %>%
+    filter(sample_type == "pqc")
+  
+  #get median values
+  loopMedian =  pqcData %>% 
+    group_by(dataType) %>% 
+    summarize(median_val = median(value, na.rm = TRUE))
+  
+  #loop mean
+  loopMean = pqcData %>% 
+    group_by(dataType) %>% 
+    summarize(mean_val = mean(value,  na.rm = TRUE))
+  
+  #loop sd
+  loopSd = pqcData %>% 
+    group_by(dataType) %>% 
+    summarize(sd_val = sd(value,  na.rm = TRUE))
+  
+  #loopRsd
+   loopRsd = loopSd %>%
+     select(dataType) %>%
+     add_column(
+       rsd_val = (loopSd$sd_val / loopMean$mean_val) *100
+     )
+   
+   
+   # get peak areas to plot
+  plotAreaCor <- master_list$data$peakArea$statTarget %>% bind_rows() %>% 
+    select(sample_run_index, sample_name, sample_type, sample_plate, all_of(idx_metabolite), all_of(plotSIL)) %>%
+    setNames(c("sample_run_index", "sample_name", "sample_type", "sample_plate", "area", "silArea")) %>%
+    left_join(
+      by = "sample_name",
+      .,
+      master_list$data$response$statTarget %>% bind_rows() %>% 
+        select(sample_name, all_of(idx_metabolite)) %>% setNames(c("sample_name", "response"))
+    )
+  
+  #combine into plotArea
+  plotDataCor <- plotAreaCor %>%
+    filter(sample_type != "vltr") %>%
+    rename(areaCor = area, silAreaCor = silArea, responseCor = response) %>%
+    pivot_longer(
+      cols = c("areaCor", 
+               "silAreaCor",  
+               "responseCor"),
+      names_to = "dataType",
+      values_to = "value"
+    )  %>%
+    mutate(sample_type = paste0(sample_type, "Cor")) 
+  
+  pqcDataCor = plotDataCor %>%
+    filter(sample_type == "pqcCor")
+  
+  #get median values
+  loopMedianCor =  pqcDataCor %>% 
+    group_by(dataType) %>% 
+    summarize(median_val = median(value, na.rm = TRUE))
+  
+  #loop mean
+  loopMeanCor = pqcDataCor %>% 
+    group_by(dataType) %>% 
+    summarize(mean_val = mean(value,  na.rm = TRUE))
+  
+  #loop sd
+  loopSdCor = pqcDataCor %>% 
+    group_by(dataType) %>% 
+    summarize(sd_val = sd(value,  na.rm = TRUE))
+  
+  #loopRsd
+   loopRsdCor = loopSdCor %>%
+     select(dataType) %>%
+     add_column(
+       rsd_val = (loopSdCor$sd_val / loopMeanCor$mean_val) *100
+     )
+   
+   #join data
+   plotDataALL <- bind_rows(
+     plotData,
+     plotDataCor
+   ) %>%
+   mutate(sample_type = factor(sample_type, levels = c("sample", "sampleCor", "pqc", "pqcCor", "ltr", "ltrCor", "NA"), ordered = TRUE)) %>%
+     arrange(sample_name, dataType)
+   
+    
+  ####--------------------
+   #add facets
+  ####--------------------
+   
+  
+    
+  #add facet column
+  plotDataALL[["facet"]] <- NA
+   
+   #area
+   plotDataALL$facet[which(plotDataALL$dataType == "area")] <- paste0("1. area;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "area")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "areaCor")] %>% floor(), "%")
+   
+   #areaCor
+   plotDataALL$facet[which(plotDataALL$dataType == "areaCor")] <- paste0("1. area;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "area")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "areaCor")] %>% floor(), "%")
+   
+   #silArea
+   plotDataALL$facet[which(plotDataALL$dataType == "silArea")] <- paste0("2. silArea;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "silArea")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "silAreaCor")] %>% floor(), "%")
+   
+    #silAreaCor
+   plotDataALL$facet[which(plotDataALL$dataType == "silAreaCor")] <- paste0("2. silArea;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "silArea")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "silAreaCor")] %>% floor(), "%")
+                    
+   #response                                                                                                               
+  plotDataALL$facet[which(plotDataALL$dataType == "response")] <- paste0("3. response;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "response")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "responseCor")] %>% floor(), "%")
+  
+  #responseCor
+    plotDataALL$facet[which(plotDataALL$dataType == "responseCor")] <- paste0("3. response;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "response")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "responseCor")] %>% floor(), "%")
+  
+  
+  #add facet for median PQC hline 
+  loopMedian[["facet"]] <- NA
+  #area
+  loopMedian$facet[which(loopMedian$dataType == "area")] <- paste0("1. area;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "area")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "areaCor")] %>% floor(), "%")
+  #silArea
+  loopMedian$facet[which(loopMedian$dataType == "silArea")] <- paste0("2. silArea;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "silArea")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "silAreaCor")] %>% floor(), "%")
+  #response
+  loopMedian$facet[which(loopMedian$dataType == "response")] <- paste0("3. response;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "response")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "responseCor")] %>% floor(), "%")
+  
+   #add facet for median PQC hline 
+  loopMedianCor[["facet"]] <- NA
+  #area
+  loopMedianCor$facet[which(loopMedianCor$dataType == "areaCor")] <- paste0("1. area;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "area")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "areaCor")] %>% floor(), "%")
+  #silArea
+  loopMedianCor$facet[which(loopMedianCor$dataType == "silAreaCor")] <- paste0("2. silArea;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "silArea")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "silAreaCor")] %>% floor(), "%")
+  #response
+  loopMedianCor$facet[which(loopMedianCor$dataType == "responseCor")] <- paste0("3. response;\n", "PQC %RSD = ", loopRsd$rsd_val[which(loopRsd$dataType == "response")] %>% floor(), "%;\n corrected PQC %RSD = ", loopRsdCor$rsd_val[which(loopRsdCor$dataType == "responseCor")] %>% floor(), "%")
+  
+  
+  
+  
+
+  
+# --------------------------------------------------------------
+## PLOT
+# --------------------------------------------------------------  
+  
+  #set plot title
+  plotTitle <- paste0(
+    master_list$templates$metaboliteNames$tidyName[which(master_list$templates$metaboliteNames$newNames == idx_metabolite)],
+    "; SIL used =  ",
+    master_list$templates$metaboliteNames$tidyName[which(master_list$templates$metaboliteNames$newNames == plotSIL)],
+    "; matched SIL = ", 
+    master_list$templates$metaboliteNames$matchedSilUsed[which(master_list$templates$metaboliteNames$newNames == idx_metabolite)]
+  )
+  
+  #create plot
+  ccPlot <- ggplot(data = plotDataALL, aes(x = sample_run_index, y = value)) +
+    geom_point(data = plotDataALL %>% filter(grepl("sample", sample_type)), aes(colour = sample_type,fill = sample_type, shape = sample_type, size = sample_type)) +
+    geom_point(data = plotDataALL %>% filter(!grepl("sample", sample_type)), aes(colour = sample_type,fill = sample_type, shape = sample_type, size = sample_type)) +
+    theme_bw() +
+    scale_shape_manual(values = c("sample" = 0, "sampleCor" = 23, "pqc" = 22, "pqcCor" = 23, "ltr" = 22, "ltrCor" = 23)) +
+    scale_size_manual(values = c("sample" = 2, "sampleCor" = 2, "pqc" = 3, "pqcCor" = 3, "ltr" = 3, "ltrCor" = 3)) +
+    scale_color_manual(values = c("sample" = "grey", "sampleCor" = "grey", "pqc" = "orchid", "pqcCor" = "black", "ltr" = "seagreen3", "ltrCor" = "black")) +
+    scale_fill_manual(values = c("sample" = "grey", "sampleCor" = "grey", "pqc" = NA, "pqcCor" = "orchid", "ltr" = NA, "ltrCor" = "seagreen3")) +
+    geom_hline(data= loopMedian, aes(yintercept=median_val), colour = "orchid4", linetype ="dotted", linewidth = 1) +
+    geom_hline(data= loopMedianCor, aes(yintercept=median_val), colour = "orchid4", linetype ="solid", linewidth = .8) +
+    facet_wrap(facets = "facet", ncol = 1, scales = "free_y") +
+    scale_y_continuous(labels = scales::label_scientific()) +
+    ggtitle(plotTitle) +
+    theme(legend.position = "none")
+    
+  
+  
+  ####------------------------
+  ## VIolin plots
+  ####------------------------
+  
+  violinData = plotDataALL %>% 
+    #filter(dataType == "responseBatchCorrected" | dataType == "response") %>%
+    mutate(sample_plate = sub("a", "", sample_plate)) %>%
+    mutate(sample_plate = sub("b", "", sample_plate)) %>%
+    #add columns tio violinData
+    add_column(
+      side = ifelse(grepl("Cor", .$sample_type), "r", "l"),
+      sample_type_x = gsub("Cor", "", .$sample_type)
+    ) 
+  
+  #add max/min dummy data to normalise axis on facet_wrap
+  for(idx_dataType in unique(violinData$dataType)){
+  #work around to normalise axis on per plate plot
+  maxValue <- violinData %>%
+    filter(dataType == idx_dataType) %>%
+    .$value %>%
+    max()
+  minValue <- violinData %>%
+    filter(dataType == idx_dataType) %>%
+    .$value %>%
+    min()
+  
+  #make dummy data per plate for plot control
+  dummyData = list()
+  for(idx_plate in unique(violinData$sample_plate)){
+  dummyData <- dummyData %>%
+    bind_rows(.,
+              bind_rows(  
+                (violinData %>%
+                   filter(dataType == idx_dataType) %>%
+                   filter(value == maxValue))[1,],
+                (violinData %>%
+                   filter(dataType == idx_dataType) %>%
+                   filter(value == minValue))[1,]
+              ) %>% mutate(
+                sample_plate = idx_plate,
+                sample_run_index = NA) 
+    ) 
+  } # idx plate\
+  
+  
+  for(idx_sampleType in unique(violinData$sample_type_x)){
+    dummyData <- dummyData %>%
+      bind_rows(.,
+                bind_rows(  
+                  (violinData %>%
+                     filter(dataType == idx_dataType) %>%
+                     filter(value == maxValue))[1,],
+                  (violinData %>%
+                     filter(dataType == idx_dataType) %>%
+                     filter(value == minValue))[1,]
+                ) %>% mutate(
+                  sample_type_x = idx_sampleType,
+                  sample_run_index = NA) 
+      ) 
+  } # idx sampleType
+  
+  #add dummy data to violinData
+  violinData <- violinData %>%
+    bind_rows(.,
+              dummyData)
+  }
+  
+  #change sample type for colour control
+  violinData$sample_type[is.na(violinData$sample_run_index)] <- "NA"
+  
+  #mutate to factor
+  violinData <- violinData %>%
+    mutate(
+      sample_type_x = factor(sample_type_x, levels = c("pqc", "ltr", "sample", "NA"), ordered = TRUE),
+      sample_plate_idx = factor(sample_plate)
+    ) %>%
+    mutate(
+      sample_plate_idx = as.integer(sample_plate_idx)
+    ) %>%
+    mutate(
+      sample_plate_idx = as.factor(sample_plate_idx)
+    )
+    
+
+#make plot
+violinPlot <- ggplot(data = violinData, aes(x = sample_type_x, y = value, fill = sample_type, color = sample_type)) +
+  theme_bw() +
+  # Split violin using gghalves
+  geom_half_violin(
+    data = violinData %>% filter(grepl("Cor", sample_type)),
+    side = "r",
+    position = position_nudge(x = 0), 
+    trim = TRUE, alpha = 1, scale = "width"
+  ) +
+  geom_half_violin(
+    data = violinData %>% filter(!grepl("Cor", sample_type)),
+    side = "l",
+    position = position_nudge(x = 0), 
+    trim = TRUE, alpha = 0.25, scale = "width"
+  ) +
+  geom_hline(data= loopMedian, aes(yintercept=median_val), colour = "orchid1", linetype ="dotted", linewidth = 1) +
+  geom_hline(data= loopMedianCor, aes(yintercept=median_val), colour = "orchid4", linetype ="solid", linewidth = .8) +
+  geom_half_boxplot(
+    data = violinData %>% filter(grepl("Cor", sample_type)),
+    side = "r",
+    position = position_nudge(x = 0.1), 
+    notch = FALSE, alpha = 1, outlier.shape = NA,
+    color = "grey30", fill = NA, center = TRUE, width = 0.25
+  ) +
+  geom_half_boxplot(
+    data = violinData %>% filter(!grepl("Cor", sample_type)),
+    side = "l",
+    position = position_nudge(x = -0.1), 
+    notch = FALSE, alpha = 1, outlier.shape = NA,
+    color = "grey30", fill = NA, center = TRUE, width = 0.25
+  ) +
+  facet_wrap(facets = c("facet"), ncol=1, scales="free_y") +
+  scale_fill_manual(values = c("sample" = "grey", "sampleCor" = "grey", "pqc" = "orchid", "pqcCor" = "orchid", "ltr" = "seagreen3", "ltrCor" = "seagreen3", "NA"= NA)) +
+  scale_color_manual(values = c("sample" = "grey", "sampleCor" = "grey", "pqc" = "orchid", "pqcCor" = "orchid", "ltr" = "seagreen3", "ltrCor" = "seagreen3", "NA"= NA)) +
+  scale_y_continuous(labels = scales::label_scientific()) +
+  #scale_shape_manual(values = c("sample" = 0, "sampleCor" = 23, "pqc" = 22, "pqcCor" = 23, "ltr" = 22, "ltrCor" = 23)) +
+  ggtitle("all plates") +
+  theme(legend.position = "none")
+
+
+
+
+
+  #make a plot per plate
+  violinPlotplate <- ggplot(data = violinData, aes(x = sample_plate_idx, y = value, fill = sample_type, color = sample_type)) +
+  theme_bw() +
+  # Split violin using gghalves
+  geom_half_violin(
+    data = violinData %>% filter(grepl("Cor", sample_type)),
+    side = "r",
+    position = position_nudge(x = 0), 
+    trim = TRUE, alpha = 1, scale = "width"
+  ) +
+  geom_half_violin(
+    data = violinData %>% filter(!grepl("Cor", sample_type)),
+    side = "l",
+    position = position_nudge(x = 0), 
+    trim = TRUE, alpha = 0.25, scale = "width"
+  ) +
+  geom_hline(data= loopMedian, aes(yintercept=median_val), colour = "orchid1", linetype ="dotted", linewidth = 1, alpha = 1) +
+  geom_hline(data= loopMedianCor, aes(yintercept=median_val), colour = "orchid4", linetype ="solid", linewidth = .8, alpha = 1) +
+  geom_half_boxplot(
+    data = violinData %>% filter(grepl("Cor", sample_type)),
+    side = "r",
+    position = position_nudge(x = 0.1), 
+    notch = FALSE, alpha = 1, outlier.shape = NA,
+    color = "grey30", fill = NA, center = TRUE, width = 0.25
+  ) +
+  geom_half_boxplot(
+    data = violinData %>% filter(!grepl("Cor", sample_type)),
+    side = "l",
+    position = position_nudge(x = -0.1), 
+    notch = FALSE, alpha = 1, outlier.shape = NA,
+    color = "grey30", fill = NA, center = TRUE, width = 0.25
+  ) +
+  facet_wrap(facets = c("facet", "sample_type_x"), ncol = length(unique(violinData$sample_type_x)), scales = "free_y") +
+  scale_fill_manual(values = c("sample" = "grey", "sampleCor" = "grey", "pqc" = "orchid", "pqcCor" = "orchid", "ltr" = "seagreen3", "ltrCor" = "seagreen3", "NA"=NA)) +
+  scale_color_manual(values = c("sample" = "grey", "sampleCor" = "grey", "pqc" = "orchid", "pqcCor" = "orchid", "ltr" = "seagreen3", "ltrCor" = "seagreen3", "NA"=NA)) +
+  scale_y_continuous(labels = scales::label_scientific()) +
+  #scale_shape_manual(values = c("sample" = 0, "sampleCor" = 23, "pqc" = 22, "pqcCor" = 23, "ltr" = 22, "ltrCor" = 23)) +
+  ggtitle("data split per plate") +
+  theme(legend.position = "none")
+    
+  
+  
+  combinedPlot <- cowplot::plot_grid(
+    ncol = 3,
+    rel_widths = c(0.35,0.15,(0.05 * pageWidth)),
+    ccPlot,
+    violinPlot,# NULL, nrow = 1, rel_widths = c(0.2,0.6,0.2)),
+    violinPlotplate
+    )
+  
+
+  print(combinedPlot)
+    
+  }
+
+dev.off()
+
+
+```
+
+# pca
+
+```{r}
+
+rsdPerformance <- master_list$summary_tables$rsdOut$statTarget
+
+X= master_list$data$response$statTarget %>% 
+  bind_rows() %>%
+  filter(sample_type %in% c("sample", "ltr", "pqc")) %>%
+  select(
+    all_of(
+      (rsdPerformance %>% filter(responseRSD<30) %>% .$newNames)
+    )
+  )
+
+Y= master_list$data$response$statTarget %>% 
+  bind_rows() %>% 
+  filter(sample_type %in% c("sample", "ltr", "pqc")) %>%
+  .$sample_type
+
+plate = master_list$data$response$statTarget %>% 
+  bind_rows() %>% 
+  filter(sample_type %in% c("sample", "ltr", "pqc")) %>%
+  .$sample_plate %>%
+  gsub("a", "", .) %>%
+  gsub("b", "", .)
+
+pcaMod <- ropls::opls(
+  x = X+1,
+  predI = 3, 
+  log10L = TRUE,
+  scaleC = 'pareto',
+  fig.pdfC = 'none', 
+  algoC = 'default'
+  )
+
+
+plotDataALL = bind_cols(
+  pcaMod@scoreMN %>% as_tibble(), 
+  Y %>% as_tibble() %>% rename("sample_type" = value),
+  plate %>% as_tibble() %>% rename("sample_plate" = value)
+)
+
+
+plot.PCA <- ggplot(data = plotDataALL, aes(x=p1, y=p2, fill = sample_type, shape = sample_type, color = sample_type)) +
+  geom_point(data = plotDataALL %>% filter(sample_type == "sample"), size = 1.5) +
+  geom_point(data = plotDataALL %>% filter(sample_type == "ltr"), size = 2.5) +
+  geom_point(data = plotDataALL %>% filter(sample_type == "pqc"), size = 2.5) +
+  scale_shape_manual(values = c("sample" = 21, "pqc" = 23, "ltr" = 21)) +
+  scale_color_manual(values = c("sample" = "black", "pqc" = "black", "ltr" = "black")) +
+  scale_fill_manual(values = c("sample" = "white", "pqc" = "orchid", "ltr" = "seagreen3")) +
+  theme_bw() +
+  ggtitle(
+    paste0(
+      "PCA on batch corrected response data;\n(samples = ", 
+      nrow(master_list$data$response$combat %>% bind_rows() %>% filter(sample_type == "sample")),
+      "; PQC = ",
+      nrow(master_list$data$response$combat %>% bind_rows() %>% filter(sample_type == "pqc")),
+      "; LTR = ",
+      nrow(master_list$data$response$combat %>% bind_rows() %>% filter(sample_type == "ltr")),
+      ";\nmetabolites = ",
+      ncol(X),
+      ")"
+    )
+    );plot.PCA
+
+plot.PCA.Plate <- ggplot(data = plotDataALL, aes(x=p1, y=p2, shape = sample_type, color = sample_type, fill = sample_plate)) +
+  geom_point(data = plotDataALL %>% filter(sample_type == "sample"), size = 2) +
+  geom_point(data = plotDataALL %>% filter(sample_type == "ltr"), size = 2.5) +
+  geom_point(data = plotDataALL %>% filter(sample_type == "pqc"), size = 2.5) +
+  scale_shape_manual(values = c("sample" = 22, "pqc" = 24, "ltr" = 25)) +
+  scale_color_manual(values = c("sample" = "grey", "pqc" = "black", "ltr" = "black")) +
+  #scale_fill_manual(values = c("RARp003" = "white", "RARp004" = "orchid", "RARp005" = "seagreen3")) +
+  theme_bw() +
+  guides(fill = guide_legend(override.aes = list(shape=21))) +
+  ggtitle(
+    paste0(
+      "PCA on batch corrected response data;\n(samples = ", 
+      nrow(master_list$data$response$combat %>% bind_rows() %>% filter(sample_type == "sample")),
+      "; PQC = ",
+      nrow(master_list$data$response$combat %>% bind_rows() %>% filter(sample_type == "pqc")),
+      "; LTR = ",
+      nrow(master_list$data$response$combat %>% bind_rows() %>% filter(sample_type == "ltr")),
+      ";\nmetabolites = ",
+      ncol(X),
+      ")"
+    )
+  );plot.PCA.Plate
+
+
+
+
+
+  #save pca
+if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/pca/"))){
+  dir.create(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/pca/"))
+}
+
+ #open pdf device
+  pdf(
+    onefile = TRUE, width = 15, height = 10,
+    file = paste0(
+                  master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/pca/", Sys.Date(), "_", master_list$project_details$project_name, "_pca_filteredMetabolites.pdf"
+    )
+  )
+  
+  print(
+    cowplot::plot_grid(
+      plot.PCA, 
+      plot.PCA.Plate
+    )
+  )
+  
+  
+  
+  dev.off()
+  
+```
+
+# exportData
+
+```{r}
+  
+#export csv
+  
+  exportData <- master_list$data$response$statTarget %>% bind_rows() %>%
+    select(
+      contains("sample"),
+      all_of((master_list$summary_tables[["rsdOut"]]$statTarget %>% filter(responseRSD<30) %>% arrange(newNames) %>% .$newNames))
+    )
+      
+for(idx_metabolite in exportData %>% select(!contains("sample")) %>% names()){
+  
+  name_from <- idx_metabolite
+  name_to <- master_list$templates$metaboliteNames$tidyName[which(master_list$templates$metaboliteNames$newNames==idx_metabolite)]
+  
+  exportData <- exportData %>%
+    rename_with(~name_to, all_of(name_from))
+  
+}
+  
+  if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/csvExport/"))){
+    dir.create(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/csvExport/"))
+  }
+  
+  write_csv(exportData,
+            file =  paste0(
+                  master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/csvExport/", Sys.Date(), "_", 
+                  master_list$project_details$user_name, "_",
+                  master_list$project_details$project_name, "_", 
+                  master_list$project_details$spe, "_",
+                  master_list$project_details$wash, "_metaboliteDATA.csv"
+                )
+              )
+```
+
+#.
+
+# checkpoint save
+
+#.
+
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/rda/"))){
+  dir.create(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/rda/"))
+}
+
+save(
+  master_list,
+  file = paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/rda/",
+                Sys.Date(), "_",
+                master_list$project_details$project_name,
+                "_SPE_AB_checkpoint_2.rda"
+  )
+)
+
+# load(file = "C:\\Users\\300828F\\Murdoch University\\Australian National Phenome Centre - Technical & Operational\\Laboratory QA QC\\Control Chart Reviews\\SPE-MCX\\lgwTest\\AB\\data\\rda\\2025-07-25_SPRESTO_SPE_AB_checkpoint_1.rda")
+
+```
+
