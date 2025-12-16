@@ -1873,13 +1873,16 @@ if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$
   dir.create(paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/rda/"))
 }
 
+
 save(
   master_list,
-  file = paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/rda/",
-                Sys.Date(), "_",
-                master_list$project_details$project_name,
-                "_SPE_",
-                master_list$project_details$wash,
+  file = paste0(
+                  master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/rda/", 
+                  Sys.Date(), "_", 
+                  master_list$project_details$user_name, "_",
+                  master_list$project_details$project_name, "_", 
+                  master_list$project_details$spe, "_",
+                  master_list$project_details$wash,
                 "_checkpoint_1.rda"
   )
 )
@@ -3073,9 +3076,7 @@ master_list$templates$metaboliteNames <- master_list$templates$metaboliteNames %
 ```
 
 
-# control charts
-
-## run order plots
+# control charts - run order plots
 
 ```{r}
 
@@ -3620,7 +3621,14 @@ if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$
     select(
       contains("sample"),
       all_of((master_list$summary_tables[["rsdOut"]]$statTarget %>% filter(responseRSD<30) %>% arrange(newNames) %>% .$newNames))
-    )
+    ) %>%
+  mutate(across(where(is.numeric),
+                ~ if_else(. < 1,
+                          signif(., 3),   # 3 significant figures if < 1
+                          round(., 2)     # 2 decimal places if >= 1
+                )
+  ))
+
       
 for(idx_metabolite in exportData %>% select(!contains("sample")) %>% names()){
   
@@ -3662,10 +3670,14 @@ if(!dir.exists(paste0(master_list$project_details$project_dir, "/", master_list$
 
 save(
   master_list,
-  file = paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/rda/",
-                Sys.Date(), "_",
-                master_list$project_details$project_name,
-                "_SPE_AB_checkpoint_2.rda"
+  file = paste0(
+                  master_list$project_details$project_dir, "/", master_list$project_details$wash, "/data/rda/", 
+                  Sys.Date(), "_", 
+                  master_list$project_details$user_name, "_",
+                  master_list$project_details$project_name, "_", 
+                  master_list$project_details$spe, "_",
+                  master_list$project_details$wash,
+                "_checkpoint_2.rda"
   )
 )
 
