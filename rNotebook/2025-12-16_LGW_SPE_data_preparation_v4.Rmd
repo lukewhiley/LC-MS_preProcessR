@@ -1409,19 +1409,19 @@ master_list$data$timestamp <- list()
 
 idx_plate = master_list$project_details$plateList[1] #for testing
 #for(idx_plate in master_list$project_details$plateList[1]){ #for testing
-#for(idx_plate in c("p044a", "p044b")){ #for testing
+#for(idx_plate in c("p045a")){ #for testing
 for(idx_plate in master_list$project_details$plateList){
 
   
-  print(idx_plate)
+#print(idx_plate)
   
   master_list$data$timestamp[[idx_plate]] <- list()
   
-  idx_mzML = master_list$data$mzR[[idx_plate]][8] #for testing loop
+  idx_mzML = master_list$data$mzR[[idx_plate]][1] #for testing loop
   #for(idx_mzML in master_list$data$mzR[[idx_plate]][c(1:6, length(master_list$data$mzR[[idx_plate]]))]){ # for testing loop
   for(idx_mzML in master_list$data$mzR[[idx_plate]]){
     
-    print(idx_mzML)
+    #printidx_mzML)
     
     #create temp mzML object
     tempMzml <- list()
@@ -1453,7 +1453,7 @@ for(idx_plate in master_list$project_details$plateList){
     idx_mrm = names(master_list$data$peakRegionFinal)[1]
     for(idx_mrm in names(master_list$data$peakRegionFinal)){
       
-      print(idx_mrm)
+      #printidx_mrm)
       #for(idx_mrm in c("GCA", "GCA-SIL_d4")){ 
       #create list on first iteration of mrm
       if(!idx_mrm %in% names(master_list$data$chromatogram)){master_list$data$chromatogram[[idx_mrm]] <- list()}
@@ -1511,13 +1511,15 @@ for(idx_plate in master_list$project_details$plateList){
       
       #confirm transition is correct for the file
       updateMrm = intersect(
-        which(tempMzml$mzR_header$precursorIsolationWindowTargetMZ == precursor_mz),
-        which(tempMzml$mzR_header$productIsolationWindowTargetMZ == product_mz)
+        which(floor(tempMzml$mzR_header$precursorIsolationWindowTargetMZ) == floor(precursor_mz)),
+        which(floor(tempMzml$mzR_header$productIsolationWindowTargetMZ) == floor(product_mz))
       )
+      
+      #printupdateMrm)
       
       #update if necessary
       if(length(updateMrm) == 0){updateMrm = 0}
-      if(updateMrm != mzml_mrm){mzml_mrm <- updateMrm}
+      if(!mzml_mrm %in% mzml_mrm){mzml_mrm <- updateMrm}
       
       
       #smooth chromatogram
@@ -1612,6 +1614,7 @@ for(idx_plate in master_list$project_details$plateList){
         )
       }#if statement
       
+      
     } #idx_mrm
   }#idx_mzml
 }#idx_plate
@@ -1673,8 +1676,9 @@ for(idx_mrm in names(master_list$data$peakRegionFinal)){
 #idx_plate="RARp003a"   
 #for(idx_plate in master_list$project_details$plateList[1]){ #for testing
 for(idx_plate in master_list$project_details$plateList){
+
   
-  print(idx_plate)
+  #print(idx_plate)
 
   #prepare data
   #add sampleType
