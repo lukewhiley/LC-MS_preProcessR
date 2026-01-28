@@ -1413,7 +1413,7 @@ idx_plate = master_list$project_details$plateList[1] #for testing
 for(idx_plate in master_list$project_details$plateList){
 
   
-#print(idx_plate)
+print(idx_plate)
   
   master_list$data$timestamp[[idx_plate]] <- list()
   
@@ -1421,7 +1421,7 @@ for(idx_plate in master_list$project_details$plateList){
   #for(idx_mzML in master_list$data$mzR[[idx_plate]][c(1:6, length(master_list$data$mzR[[idx_plate]]))]){ # for testing loop
   for(idx_mzML in master_list$data$mzR[[idx_plate]]){
     
-    #printidx_mzML)
+    print(idx_mzML)
     
     #create temp mzML object
     tempMzml <- list()
