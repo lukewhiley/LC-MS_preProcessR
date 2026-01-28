@@ -1,0 +1,28 @@
+{
+    "id": "6D80EFB3",
+    "path": "C:/Users/300828F/github/LC-MS_preProcessR/rNotebook/2025-12-16_LGW_SPE_data_preparation_v4.Rmd",
+    "project_path": "rNotebook/2025-12-16_LGW_SPE_data_preparation_v4.Rmd",
+    "type": "r_markdown",
+    "hash": "1115863503",
+    "contents": "",
+    "dirty": false,
+    "created": 1768915425148.0,
+    "source_on_save": false,
+    "relative_order": 3,
+    "properties": {
+        "chunk_output_type": "console",
+        "source_window_id": "",
+        "Source": "Source",
+        "docOutlineVisible": "1",
+        "cursorPosition": "1615,0",
+        "scrollLine": "1564"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1769580602,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1769580602715,
+    "read_only": false,
+    "read_only_alternatives": []
+}

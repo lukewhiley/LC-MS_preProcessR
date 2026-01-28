@@ -1,0 +1,211 @@
+#object for data for chromatogram
+master_list$data$chromatogram <- list()
+master_list$data$peakAreaMetabolite <- list()
+master_list$data$timestamp <- list()
+
+#idx_plate = master_list$project_details$plateList[1] #for testing
+#for(idx_plate in master_list$project_details$plateList[1]){ #for testing
+for(idx_plate in master_list$project_details$plateList){
+  
+  print(idx_plate)
+  
+  master_list$data$timestamp[[idx_plate]] <- list()
+  
+  idx_mzML = master_list$data$mzR[[idx_plate]][8] #for testing loop
+  #for(idx_mzML in master_list$data$mzR[[idx_plate]][c(1:6, length(master_list$data$mzR[[idx_plate]]))]){ # for testing loop
+  for(idx_mzML in master_list$data$mzR[[idx_plate]]){
+    
+    print(idx_mzML)
+    
+    #create temp mzML object
+    tempMzml <- list()
+    #load mzml
+    tempMzml$mzR_object <- mzR::openMSfile(
+      filename = paste0(master_list$project_details$plateDirList[grepl(idx_plate, master_list$project_details$plateDirList)], "/", idx_mzML)
+    )
+    #create mzR header
+    tempMzml$mzR_header <- mzR::chromatogramHeader(tempMzml$mzR_object)
+    #create mzR chromatogram
+    tempMzml$mzR_chromatogram <- mzR::chromatograms(tempMzml$mzR_object)
+    
+    #store sample timestamp
+    master_list$data$timestamp[[idx_plate]] <- bind_rows(
+      master_list$data$timestamp[[idx_plate]],
+      tibble(
+        samplePlate = idx_plate,
+        sampleName = idx_mzML,
+        sampleTimestamp = tempMzml$mzR_object@backend$getRunStartTimeStamp()
+      ) %>%
+        add_column(.before = 1,
+                   sampleID = paste0(.$samplePlate, "_", .$sampleName)
+        )
+    )
+    
+    # extract peak region
+    #idx_mrm = "GCA-SIL_d4" # for testing loop
+    idx_mrm ="TCA"
+    for(idx_mrm in names(master_list$data$peakRegionFinal)){
+      print(idx_mrm)
+      #for(idx_mrm in c("GCA", "GCA-SIL_d4")){ 
+      #create list on first iteration of mrm
+      if(!idx_mrm %in% names(master_list$data$chromatogram)){master_list$data$chromatogram[[idx_mrm]] <- list()}
+      if(!idx_mrm %in% names(master_list$data$peakAreaMetabolite)){master_list$data$peakAreaMetabolite[[idx_mrm]] <- list()}
+      
+      #get precursor and product info from peakRegion table
+      precursor_mz = master_list$data$peakRegionFinal[[idx_mrm]] %>%
+        filter(sample_plate == idx_plate) %>%
+        .$precursor_mz %>% unique()
+      product_mz = master_list$data$peakRegionFinal[[idx_mrm]] %>%
+        filter(sample_plate == idx_plate) %>%
+        .$product_mz %>%
+        unique()
+      #find mrm function in the mzML file
+      mzml_mrm <- master_list$data$peakRegionFinal[[idx_mrm]] %>%
+        filter(sample_plate == idx_plate) %>%
+        .$ms_header_id
+      
+      #work around if functions and channels have moved as a result of an RT window update
+      if(length(mzml_mrm) > 1){
+        mzml_mrm = tempMzml$mzR_header %>%
+          as_tibble() %>%
+          filter(chromatogramIndex %in% mzml_mrm) %>%
+          filter(floor(precursorIsolationWindowTargetMZ) == floor(precursor_mz)) %>%
+          filter(floor(productIsolationWindowTargetMZ) == floor(product_mz)) %>%
+          .$chromatogramIndex
+      }
+      
+      
+      #peakStart in check
+      peakStartRT = master_list$data$peakRegionFinal[[idx_mrm]] %>%
+        filter(sample_plate == idx_plate) %>%
+        filter(ms_header_id == mzml_mrm) %>%
+        .$peakStartRT %>% as.numeric() %>% round(digits = 3) %>% min(na.rm = TRUE)
+      #peakEnd in check
+      peakEndRT = master_list$data$peakRegionFinal[[idx_mrm]] %>%
+        filter(sample_plate == idx_plate) %>%
+        filter(ms_header_id == mzml_mrm) %>%
+        .$peakEndRT %>% as.numeric() %>% round(digits = 3) %>% max(na.rm = TRUE)
+      #peakApex in check
+      peakApexRT = master_list$data$peakRegionFinal[[idx_mrm]] %>%
+        filter(sample_plate == idx_plate) %>%
+        filter(ms_header_id == mzml_mrm) %>%
+        .$peakApexRT %>% as.numeric() %>% round(digits = 3) %>% base::mean(na.rm = TRUE)
+      
+      
+      #set empty object on first iteration
+      if(!idx_plate %in% names(master_list$data$chromatogram[[idx_mrm]])){
+        master_list$data$chromatogram[[idx_mrm]][[idx_plate]] <- list()
+        master_list$data$chromatogram[[idx_mrm]][[idx_plate]][["all"]] <- list()
+        master_list$data$chromatogram[[idx_mrm]][[idx_plate]][["peak"]] <- list()
+      }
+      
+      
+      #confirm transition is correct for the file
+      updateMrm = intersect(
+        which(tempMzml$mzR_header$precursorIsolationWindowTargetMZ == precursor_mz),
+        which(tempMzml$mzR_header$productIsolationWindowTargetMZ == product_mz)
+      )
+      
+      #update if necessary
+      if(is.integer(updateMrm)){updateMrm = 0}
+      if(updateMrm != mzml_mrm){mzml_mrm <- updateMrm}
+      
+      
+      #smoth chromatogram
+      if(mzml_mrm > 0){
+        
+        #depending on mzR version header could be "rtime" or "time"
+        if(length(tempMzml$mzR_chromatogram[[mzml_mrm]][["rtime"]]) > 0){mzHeader = "rtime"}
+        if(length(tempMzml$mzR_chromatogram[[mzml_mrm]][["time"]]) > 0){mzHeader = "time"}
+        
+        #finalise chromatogram data 
+        tempMzml$smooth <-  #smooth chromatogram
+          tibble(
+            time = tempMzml$mzR_chromatogram[[mzml_mrm]][[mzHeader]],
+            intensity = tempMzml$mzR_chromatogram[[mzml_mrm]][,2] %>%
+              pracma::savgol(fl = 7, forder = 0, dorder = 0) %>%
+              pracma::savgol(fl = 5, forder = 0, dorder = 0) %>%
+              pracma::savgol(fl = 3, forder = 0, dorder = 0)
+          ) %>% 
+          setNames(c("time", "intensity")) %>%
+          add_column(.before=1,
+                     sampleName = idx_mzML,
+                     samplePlate = idx_plate,
+                     sampleMetabolite = idx_mrm,
+                     precursor_mz = precursor_mz,
+                     product_mz = product_mz) %>% 
+          add_column(.after = "sampleName",
+                     sampleFacet = sub("(?i)_fepp_", ".", paste0(gsub("_.*", "", .$sampleName), "_", gsub(".*@", "", .$sampleName)))
+          )
+        
+        
+        #bind chromatogram data for all window
+        master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$all <- bind_rows(
+          master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$all,
+          tempMzml$smooth
+        )#bind rows
+        
+        #get peak Index
+        peakStartIndex <- which.min(abs(tempMzml$smooth$time - peakStartRT))
+        #set new end
+        peakEndIndex <- which.min(abs(tempMzml$smooth$time - peakEndRT))
+        
+        #crop plot
+        tempMzml$smoothCrop <- tempMzml$smooth[c(peakStartIndex:peakEndIndex),]
+        
+        # bind peak region
+        master_list$data$chromatogram[[idx_mrm]][[idx_plate]][["peak"]] <- bind_rows(
+          master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$peak,
+          tempMzml$smoothCrop
+        )
+        
+        
+        #plot(master_list$data$chromatogram[[idx_mrm]][[idx_plate]]$peak$intensity)
+        
+        #get peak intensity using Trapz
+        peakIntegral <- tempMzml$smoothCrop$intensity %>%
+          pracma::trapz(.)
+        
+        #find peak apex
+        peakApexIdx = which.min(abs(tempMzml$smooth$intensity - max(tempMzml$smoothCrop$intensity)))
+        
+        # find peak RT
+        peakRT = tempMzml$smooth$time[peakApexIdx] %>% round(2)
+        
+        #combine into a master tibble
+        master_list$data$peakAreaMetabolite[[idx_mrm]] <- bind_rows(
+          master_list$data$peakAreaMetabolite[[idx_mrm]],
+          tibble(
+            samplePlate = idx_plate,
+            sampleName = idx_mzML,
+            sampleMetabolite = idx_mrm,
+            precursor_mz = precursor_mz,
+            product_mz = product_mz,
+            peakAreaMetabolite = peakIntegral,
+            peakRT = peakRT
+          )
+        )#bind_rows 
+      }#if statement
+      
+      #create dummy data where transition doesn't exist in datafile
+      if(mzml_mrm == 0){
+        master_list$data$peakAreaMetabolite[[idx_mrm]] <- bind_rows(
+          master_list$data$peakAreaMetabolite[[idx_mrm]],
+          tibble(
+            samplePlate = idx_plate,
+            sampleName = idx_mzML,
+            sampleMetabolite = idx_mrm,
+            precursor_mz = precursor_mz,
+            product_mz = product_mz,
+            peakAreaMetabolite = NA,
+            peakRT = NA
+          )
+        )
+      }#if statement
+      
+    } #idx_mrm
+  }#idx_mzml
+}#idx_plate
+
+
+#rm(tempMzml)

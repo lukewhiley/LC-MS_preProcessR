@@ -1,0 +1,151 @@
+file.path = "C:\\Users\\300828F\\Murdoch University\\Luke Whiley - HDR students - Manthan - Manthan\\data\\"
+
+rda.list <- list.files(
+  path =file.path,
+  pattern = ".rda", 
+  full.names = TRUE
+)
+
+load(rda.list[1])
+
+#create new object
+master_list$data$peakArea <- list()
+
+master_list$data$peakArea$Long <- left_join(by = "sampleID",
+                                            #sample timestamp
+                                            master_list$data$timestamp %>% bind_rows() %>% select(sampleID, sampleTimestamp),
+                                            #peakArea
+                                            master_list$data$peakAreaMetabolite %>% 
+                                              bind_rows() %>%
+                                              add_column(.after = "sampleMetabolite",
+                                                         sampleID = paste0(.$samplePlate, "_", .$sampleName)
+                                              ) %>%
+                                              add_column(.after = "sampleName",
+                                                         sampleType = "sample")
+)
+
+
+masterListAll <- master_list
+
+
+
+idx = rda.list[2]
+
+for(idx in rda.list[2:length(rda.list)]){
+  
+  print(idx)
+  
+  load(idx)
+  
+  #create new object
+  master_list$data$peakArea <- list()
+  
+  master_list$data$peakArea$Long <- left_join(by = "sampleID",
+                                              #sample timestamp
+                                              master_list$data$timestamp %>% bind_rows() %>% select(sampleID, sampleTimestamp),
+                                              #peakArea
+                                              master_list$data$peakAreaMetabolite %>% 
+                                                bind_rows() %>%
+                                                add_column(.after = "sampleMetabolite",
+                                                           sampleID = paste0(.$samplePlate, "_", .$sampleName)
+                                                ) %>%
+                                                add_column(.after = "sampleName",
+                                                           sampleType = "sample")
+  )
+  
+  
+  masterListAll$data$peakArea$Long <-  masterListAll$data$peakArea$Long %>%
+    bind_rows(master_list$data$peakArea$Long)
+  
+  
+}
+
+
+#remove duplcated sammples
+masterListAll$data$peakArea$Long <- masterListAll$data$peakArea$Long[-intersect(which(masterListAll$data$peakArea$Long$samplePlate == "p045a"), grep("p044", masterListAll$data$peakArea$Long$sampleID)),]
+
+
+#update plate to p044b
+masterListAll$data$peakArea$Long <- masterListAll$data$peakArea$Long %>%
+  mutate(
+    samplePlate = stringr::str_replace_all(samplePlate, fixed("p045a"), "p044b")
+  ) 
+
+
+#convert back to masterList
+master_list <- masterListAll
+
+
+#check sample
+master_list$data$peakArea$Long$sampleType[grep("check", master_list$data$peakArea$Long$sampleName, ignore.case = TRUE)] <- "check"
+#ltr sample
+master_list$data$peakArea$Long$sampleType[grep("pqc", master_list$data$peakArea$Long$sampleName, ignore.case = TRUE)] <- "pqc"
+#vltr sample
+master_list$data$peakArea$Long$sampleType[grep("ltr", master_list$data$peakArea$Long$sampleName, ignore.case = TRUE)] <- "ltr"
+#sltr sample
+master_list$data$peakArea$Long$sampleType[grep("sltr", master_list$data$peakArea$Long$sampleName, ignore.case = TRUE)] <- "sltr"
+#pqc sample
+master_list$data$peakArea$Long$sampleType[grep("vltr", master_list$data$peakArea$Long$sampleName, ignore.case = TRUE)] <- "vltr"
+#blank sample
+master_list$data$peakArea$Long$sampleType[grep("blank", master_list$data$peakArea$Long$sampleName, ignore.case = TRUE)] <- "blank"
+
+
+
+### create mising values
+#(because some transitions have noise a missing value can be recorded as non-missing)
+master_list$data$peakArea$Long$peakAreaMetabolite[which(master_list$data$peakArea$Long$peakAreaMetabolite<250000)] <- NA
+
+
+#make a wide version
+master_list$data$peakArea$wide <- master_list$data$peakArea$Long %>%
+  rename(peakArea = peakAreaMetabolite) %>%
+  pivot_wider(
+    id_cols = c(sampleID, sampleTimestamp, samplePlate,sampleName, sampleType),  
+    names_from = sampleMetabolite, 
+    values_from = peakArea
+  )
+
+#remove check, conditioning etc
+master_list$data$peakArea$wide <- master_list$data$peakArea$wide %>%
+  filter(sampleType == "pqc" | sampleType == "sample" | sampleType == "ltr" | sampleType == "sltr" | sampleType == "vltr") %>%
+  arrange(sampleTimestamp) %>%
+  add_column(sampleRunIndex = c(1:nrow(.)), .before = 1) %>%
+  #add_factor column for plotting
+  add_column(.after = "sampleType",
+             sampleTypeFactor = factor(.$sampleType ,
+                                       levels = c("sample", "pqc", "ltr", "vltr", "sltr"), 
+                                       ordered = TRUE),
+             sampleQC = "sample")
+
+#select ltr as study QC type
+master_list$data$peakArea$wide$sampleQC[grepl("ltr",master_list$data$peakArea$wide$sampleType)] <- "qc"
+master_list$data$peakArea$wide$sampleQC[grepl("sltr",master_list$data$peakArea$wide$sampleType)] <- "sample"
+master_list$data$peakArea$wide$sampleQC[grepl("vltr",master_list$data$peakArea$wide$sampleType)] <- "sample"
+
+
+#remove neg values
+tempData <-  master_list$data$peakArea$wide %>% select(!contains("sample")) %>% as.matrix()
+tempData[which(tempData <0)] <- 0
+master_list$data$peakArea$wide <- bind_cols(
+  master_list$data$peakArea$wide %>% select(contains("sample")),
+  tempData %>% as_tibble()
+)
+
+
+
+#remove sltr (only x per plate)
+master_list$data$peakArea$wide <- master_list$data$peakArea$wide %>% 
+  filter(sampleType != "sltr")
+
+
+#export RDA
+save(
+  master_list,
+  file = paste0(file.path,
+                Sys.Date(), "_",
+                master_list$project_details$project_name,
+                "_SPE_",
+                master_list$project_details$wash,
+                "_checkpoint_1_combined.rda"
+  )
+)
