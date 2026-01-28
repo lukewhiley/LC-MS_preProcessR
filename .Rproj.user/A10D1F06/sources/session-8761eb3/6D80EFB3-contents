@@ -1407,9 +1407,11 @@ master_list$data$chromatogram <- list()
 master_list$data$peakAreaMetabolite <- list()
 master_list$data$timestamp <- list()
 
-#idx_plate = master_list$project_details$plateList[1] #for testing
+idx_plate = master_list$project_details$plateList[1] #for testing
 #for(idx_plate in master_list$project_details$plateList[1]){ #for testing
+#for(idx_plate in c("p044a", "p044b")){ #for testing
 for(idx_plate in master_list$project_details$plateList){
+
   
   print(idx_plate)
   
@@ -1448,7 +1450,9 @@ for(idx_plate in master_list$project_details$plateList){
     # extract peak region
     #idx_mrm = "GCA-SIL_d4" # for testing loop
     idx_mrm ="TCA"
+    idx_mrm = names(master_list$data$peakRegionFinal)[1]
     for(idx_mrm in names(master_list$data$peakRegionFinal)){
+      
       print(idx_mrm)
       #for(idx_mrm in c("GCA", "GCA-SIL_d4")){ 
       #create list on first iteration of mrm
@@ -1470,6 +1474,7 @@ for(idx_plate in master_list$project_details$plateList){
       
       #work around if functions and channels have moved as a result of an RT window update
       if(length(mzml_mrm) > 1){
+        
         mzml_mrm = tempMzml$mzR_header %>%
           as_tibble() %>%
           filter(chromatogramIndex %in% mzml_mrm) %>%
@@ -1511,11 +1516,11 @@ for(idx_plate in master_list$project_details$plateList){
       )
       
       #update if necessary
-      if(is.integer(updateMrm)){updateMrm = 0}
+      if(length(updateMrm) == 0){updateMrm = 0}
       if(updateMrm != mzml_mrm){mzml_mrm <- updateMrm}
       
       
-      #smoth chromatogram
+      #smooth chromatogram
       if(mzml_mrm > 0){
         
         #depending on mzR version header could be "rtime" or "time"
@@ -1654,7 +1659,6 @@ for(idx_mrm in names(master_list$data$peakRegionFinal)){
    #master_list$plots$chromatogram[[idx_mrm]] <- list()
   
   message(paste0("printing plot ", i, " of ", totalMRM, "; ", idx_mrm, ".  ")) 
-  i=i+1
   
    #open png device
   pdf(onefile = TRUE, width = 16, height = 7.5,  
@@ -1669,6 +1673,8 @@ for(idx_mrm in names(master_list$data$peakRegionFinal)){
 #idx_plate="RARp003a"   
 #for(idx_plate in master_list$project_details$plateList[1]){ #for testing
 for(idx_plate in master_list$project_details$plateList){
+  
+  print(idx_plate)
 
   #prepare data
   #add sampleType
@@ -1724,6 +1730,9 @@ for(idx_plate in master_list$project_details$plateList){
 }#idx_plate
   
 dev.off()
+
+#iterate i
+i=i+1
 
 }#idx_mrm
 
