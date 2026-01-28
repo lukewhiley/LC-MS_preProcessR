@@ -1409,8 +1409,8 @@ master_list$data$timestamp <- list()
 
 idx_plate = master_list$project_details$plateList[1] #for testing
 #for(idx_plate in master_list$project_details$plateList[1]){ #for testing
-for(idx_plate in c("p045a")){ #for testing
-#for(idx_plate in master_list$project_details$plateList){
+#for(idx_plate in c("p044a")){ #for testing
+for(idx_plate in master_list$project_details$plateList){
 
   
 print(idx_plate)
@@ -1500,7 +1500,7 @@ print(idx_plate)
           .$chromatogramIndex
       #}
       
-        print(mzml_mrm)
+        #print(mzml_mrm)
         
       
      
@@ -1517,7 +1517,7 @@ print(idx_plate)
       
        mzml_mrm = mzml_mrm[1]
   
-      print(mzml_mrm)
+      #print(mzml_mrm)
       
       
       #set empty object on first iteration
