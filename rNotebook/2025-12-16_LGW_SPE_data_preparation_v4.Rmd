@@ -1409,8 +1409,8 @@ master_list$data$timestamp <- list()
 
 idx_plate = master_list$project_details$plateList[1] #for testing
 #for(idx_plate in master_list$project_details$plateList[1]){ #for testing
-#for(idx_plate in c("p045a")){ #for testing
-for(idx_plate in master_list$project_details$plateList){
+for(idx_plate in c("p045a")){ #for testing
+#for(idx_plate in master_list$project_details$plateList){
 
   
 print(idx_plate)
@@ -1453,7 +1453,7 @@ print(idx_plate)
     idx_mrm = names(master_list$data$peakRegionFinal)[1]
     for(idx_mrm in names(master_list$data$peakRegionFinal)){
       
-      #printidx_mrm)
+      print(idx_mrm)
       #for(idx_mrm in c("GCA", "GCA-SIL_d4")){ 
       #create list on first iteration of mrm
       if(!idx_mrm %in% names(master_list$data$chromatogram)){master_list$data$chromatogram[[idx_mrm]] <- list()}
@@ -1467,38 +1467,57 @@ print(idx_plate)
         filter(sample_plate == idx_plate) %>%
         .$product_mz %>%
         unique()
-      #find mrm function in the mzML file
-      mzml_mrm <- master_list$data$peakRegionFinal[[idx_mrm]] %>%
-        filter(sample_plate == idx_plate) %>%
-        .$ms_header_id
-      
-      #work around if functions and channels have moved as a result of an RT window update
-      if(length(mzml_mrm) > 1){
-        
-        mzml_mrm = tempMzml$mzR_header %>%
-          as_tibble() %>%
-          filter(chromatogramIndex %in% mzml_mrm) %>%
-          filter(floor(precursorIsolationWindowTargetMZ) == floor(precursor_mz)) %>%
-          filter(floor(productIsolationWindowTargetMZ) == floor(product_mz)) %>%
-          .$chromatogramIndex
-      }
-      
-      
+       
       #peakStart in check
       peakStartRT = master_list$data$peakRegionFinal[[idx_mrm]] %>%
         filter(sample_plate == idx_plate) %>%
-        filter(ms_header_id == mzml_mrm) %>%
+        #filter(ms_header_id == mzml_mrm) %>%
         .$peakStartRT %>% as.numeric() %>% round(digits = 3) %>% min(na.rm = TRUE)
       #peakEnd in check
       peakEndRT = master_list$data$peakRegionFinal[[idx_mrm]] %>%
         filter(sample_plate == idx_plate) %>%
-        filter(ms_header_id == mzml_mrm) %>%
+        #filter(ms_header_id == mzml_mrm) %>%
         .$peakEndRT %>% as.numeric() %>% round(digits = 3) %>% max(na.rm = TRUE)
       #peakApex in check
       peakApexRT = master_list$data$peakRegionFinal[[idx_mrm]] %>%
         filter(sample_plate == idx_plate) %>%
-        filter(ms_header_id == mzml_mrm) %>%
+        #filter(ms_header_id == mzml_mrm) %>%
         .$peakApexRT %>% as.numeric() %>% round(digits = 3) %>% base::mean(na.rm = TRUE)
+      
+      #find mrm function in the mzML file
+      # mzml_mrm <- master_list$data$peakRegionFinal[[idx_mrm]] %>%
+      #   filter(sample_plate == idx_plate) %>%
+      #   .$ms_header_id
+      
+      #work around if functions and channels have moved as a result of an RT window update
+      #if(length(mzml_mrm) > 1){
+        
+        mzml_mrm = tempMzml$mzR_header %>%
+          as_tibble() %>%
+          #filter(chromatogramIndex %in% mzml_mrm) %>%
+          filter(floor(precursorIsolationWindowTargetMZ) == floor(precursor_mz)) %>%
+          filter(floor(productIsolationWindowTargetMZ) == floor(product_mz)) %>%
+          .$chromatogramIndex
+      #}
+      
+        print(mzml_mrm)
+        
+      
+     
+      
+      
+      #if multiple transition matches
+        if(length(mzml_mrm) > 1){
+          for(idx in mzml_mrm){
+           if(! (peakApexRT > min(tempMzml$mzR_chromatogram[idx][[1]][,1]) & 
+               peakApexRT < max(tempMzml$mzR_chromatogram[idx][[1]][,1]))
+           ){mzml_mrm = mzml_mrm[-which(mzml_mrm == idx)]}
+          }
+        }
+      
+       mzml_mrm = mzml_mrm[1]
+  
+      print(mzml_mrm)
       
       
       #set empty object on first iteration
@@ -1510,16 +1529,21 @@ print(idx_plate)
       
       
       #confirm transition is correct for the file
-      updateMrm = intersect(
-        which(floor(tempMzml$mzR_header$precursorIsolationWindowTargetMZ) == floor(precursor_mz)),
-        which(floor(tempMzml$mzR_header$productIsolationWindowTargetMZ) == floor(product_mz))
-      )
+      # updateMrm = intersect(
+      #   which(floor(tempMzml$mzR_header$precursorIsolationWindowTargetMZ) == floor(precursor_mz)),
+      #   which(floor(tempMzml$mzR_header$productIsolationWindowTargetMZ) == floor(product_mz))
+      # )
       
       #printupdateMrm)
       
       #update if necessary
-      if(length(updateMrm) == 0){updateMrm = 0}
-      if(!mzml_mrm %in% mzml_mrm){mzml_mrm <- updateMrm}
+      # if(length(updateMrm) == 0){updateMrm = 0}
+      # if(!mzml_mrm %in% updateMrm){mzml_mrm <- updateMrm}
+      # if(length(mzml_mrm) > 1){
+      #   medianTime <- NULL
+      #   for(idx in mzml_mrm)
+      #     peakStart > tempMzml$mzR_chromatogram[idx][[1]][,1][1]
+      # }
       
       
       #smooth chromatogram
