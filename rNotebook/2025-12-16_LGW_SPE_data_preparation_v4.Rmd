@@ -1409,7 +1409,7 @@ master_list$data$timestamp <- list()
 
 idx_plate = master_list$project_details$plateList[1] #for testing
 #for(idx_plate in master_list$project_details$plateList[1]){ #for testing
-#for(idx_plate in c("p044a")){ #for testing
+#for(idx_plate in c("p041b")){ #for testing
 for(idx_plate in master_list$project_details$plateList){
 
   
@@ -1427,7 +1427,10 @@ print(idx_plate)
     tempMzml <- list()
     #load mzml
     tempMzml$mzR_object <- mzR::openMSfile(
-      filename = paste0(master_list$project_details$plateDirList[grepl(idx_plate, master_list$project_details$plateDirList)], "/", idx_mzML)
+      filename = paste0(
+        master_list$project_details$plateDirList[grepl(idx_plate, master_list$project_details$plateDirList)], 
+        "/", idx_mzML
+        )
     )
     #create mzR header
     tempMzml$mzR_header <- mzR::chromatogramHeader(tempMzml$mzR_object)
@@ -1513,9 +1516,16 @@ print(idx_plate)
                peakApexRT < max(tempMzml$mzR_chromatogram[idx][[1]][,1]))
            ){mzml_mrm = mzml_mrm[-which(mzml_mrm == idx)]}
           }
+          
+          mzml_mrm = mzml_mrm[1]
         }
+        
+        #if not mrm funtion found set as 0 for use later
+          if(length(mzml_mrm) == 0){
+             mzml_mrm = 0
+          }
       
-       mzml_mrm = mzml_mrm[1]
+       
   
       #print(mzml_mrm)
       
@@ -2408,12 +2418,12 @@ for(idx_plate in master_list$data$peakArea$impute %>% names()){
 
 #create batch correction directory
 
-skylineR_directory <- paste0(master_list$project_details$project_dir, "\\", master_list$project_details$wash)
+skylineR_directory <- paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash)
 
 #data
 
-if(!dir.exists(paste0(skylineR_directory, "\\statTarget"))){
-  dir.create(paste0(skylineR_directory, "\\statTarget"))
+if(!dir.exists(paste0(skylineR_directory, "/statTarget"))){
+  dir.create(paste0(skylineR_directory, "/statTarget"))
 }
 
 
@@ -2431,7 +2441,7 @@ master_list$project_details$statTarget_qc_type <- dlgInput("which qc type will b
 #create data list 
 FUNC_list <- list()
 FUNC_list$project_dir <- paste0(skylineR_directory,
-                                "\\statTarget")
+                                "/statTarget")
 
 #set up project folders for batch correct
 #create directories 
@@ -2639,23 +2649,23 @@ write_csv(x = FUNC_list$ProfileFile$ProfileFile,
 )
 
 #script files
-samPeno <- paste(getwd(), "\\PhenoFile.csv", sep="")
-samFile <- paste(getwd(),  "\\ProfileFile.csv", sep="")
+samPeno <- paste(getwd(), "/PhenoFile.csv", sep="")
+samFile <- paste(getwd(),  "/ProfileFile.csv", sep="")
 
 #create_directories
-if(!dir.exists(paste(getwd(), "shiftCor", sep = "\\"))){
-  dir.create(paste(getwd(), "shiftCor", sep = "\\"))
+if(!dir.exists(paste(getwd(), "shiftCor", sep = "/"))){
+  dir.create(paste(getwd(), "shiftCor", sep = "/"))
 }
 
 #and subDir
-if(!dir.exists(paste(getwd(), "shiftCor", "Before_shiftCor", sep = "\\"))){
-  dir.create(paste(getwd(), "shiftCor", "Before_shiftCor", sep = "\\"))
+if(!dir.exists(paste(getwd(), "shiftCor", "Before_shiftCor", sep = "/"))){
+  dir.create(paste(getwd(), "shiftCor", "Before_shiftCor", sep = "/"))
 }
 
 
 #check nchar
-if(nchar(paste(getwd(), "shiftCor", "Before_shiftCor", sep = "\\")) >= 225){
-  svDialogs::dlg_message(paste0("WARNING: your path length is ", nchar(paste(getwd(), "shiftCor", "Before_shiftCor", sep = "\\")), " characters. Beware - windows path limit is 260, you may experience a path error. If chunk errors, relocate project to a shorter path (e.g. desktop) for processing"))
+if(nchar(paste(getwd(), "shiftCor", "Before_shiftCor", sep = "/")) >= 225){
+  svDialogs::dlg_message(paste0("WARNING: your path length is ", nchar(paste(getwd(), "shiftCor", "Before_shiftCor", sep = "/")), " characters. Beware - windows path limit is 260, you may experience a path error. If chunk errors, relocate project to a shorter path (e.g. desktop) for processing"))
 }
 
                  
@@ -3745,7 +3755,7 @@ save(
   )
 )
 
-# load(file = "C:\\Users\\300828F\\Murdoch University\\Australian National Phenome Centre - Technical & Operational\\Laboratory QA QC\\Control Chart Reviews\\SPE-MCX\\lgwTest\\AB\\data\\rda\\2025-07-25_SPRESTO_SPE_AB_checkpoint_1.rda")
+# load(file = "C:/Users/300828F/Murdoch University/Australian National Phenome Centre - Technical & Operational/Laboratory QA QC/Control Chart Reviews/SPE-MCX/lgwTest/AB/data/rda/2025-07-25_SPRESTO_SPE_AB_checkpoint_1.rda")
 
 ```
 
