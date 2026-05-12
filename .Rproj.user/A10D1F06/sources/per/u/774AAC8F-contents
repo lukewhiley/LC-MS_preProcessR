@@ -1,0 +1,180 @@
+studyData = master_list$data$peakArea$rsdFiltered %>%
+  filter(sampleGroup != "LTR")
+
+
+## ---------------------------------------------------------------------------
+## Lipid study-sample bar-chart generator
+## Input : studyData – rows = samples, columns = lipid concentrations
+##         metadata  – data.frame with columns: sample_id, group, day
+##                     (or set these up manually below)
+## Output: Single PDF, one bar chart per lipid, ordered by mode → class.
+##         X-axis grouped by: SR → control_5 → control_10 →
+##         VDRC_100472_5 → VDRC_100472_10 → VDRC_101700_5 → VDRC_101700_10
+##         Includes mean (solid red), ±15 %RSD (dotted), ±30 %RSD (dashed).
+## ---------------------------------------------------------------------------
+
+library(tidyverse)
+library(stringr)
+
+# ---- USER SETTINGS ---------------------------------------------------------
+id_col   <- 1                       # column holding sample IDs
+out_file <- "lipid_study_plots.pdf"
+# ---------------------------------------------------------------------------
+
+# ---- Define group / day ordering -------------------------------------------
+# Desired x-axis block order
+group_day_levels <- c(
+  "SR",
+  "control | 5",  "control | 10",
+  "VDRC_100472 | 5",  "VDRC_100472 | 10",
+  "VDRC_101700 | 5",  "VDRC_101700 | 10"
+)
+
+# Colour palette – one colour per group
+group_colours <- c(
+  "SR"          = "#999999",
+  "control"     = "#4E79A7",
+  "VDRC_100472" = "#F28E2B",
+  "VDRC_101700" = "#59A14F"
+)
+
+# ---- OPTION A: build metadata from studyData sample IDs -------------------
+# Assumes sample IDs follow a pattern like "SR_1", "control_5_3", etc.
+# Adjust the regex / logic below to match your actual naming convention.
+
+# metadata <- data.frame(
+#   sample_id = names_of_your_samples,
+#   group     = ...,
+#   day       = ...
+# )
+
+# ---- OPTION B: if you already have a metadata data.frame, skip above ------
+
+# ---- Helper: parse lipid column name into mode + class ---------------------
+parse_lipid <- function(x) {
+  mode <- str_extract(x, "^(neg|pos)")
+  remainder <- str_trim(str_remove(x, "^(neg|pos)\\s*"))
+  
+  if (str_detect(remainder, regex("^cholesterol sulfate", ignore_case = TRUE))) {
+    cls <- "Cholesterol sulfate"
+  } else if (str_detect(remainder, regex("fa\\(", ignore_case = TRUE))) {
+    cls <- "FA"
+  } else if (str_detect(remainder, regex("car\\(", ignore_case = TRUE))) {
+    cls <- "CAR"
+  } else {
+    cls <- str_extract(remainder, "^[A-Za-z]+") %>% toupper()
+  }
+  
+  tibble(mode = mode, lipid_class = cls)
+}
+
+# ---- Build lipid lookup ----------------------------------------------------
+lipid_cols <- lipid_cols <- setdiff(names(studyData), names(studyData)[grepl("sample", names(studyData))])
+
+lipid_info <- tibble(lipid = lipid_cols) %>%
+  bind_cols(map_dfr(lipid_cols, parse_lipid)) %>%
+  arrange(mode, lipid_class, lipid)
+
+cat("Detected groupings:\n")
+print(lipid_info %>% count(mode, lipid_class))
+
+# ---- Pivot to long & merge metadata ----------------------------------------
+long_df <- studyData %>%
+  rename(sample_id = !!id_col) %>%
+  mutate(sample_id = as.character(sample_id)) %>%
+  pivot_longer(cols = all_of(lipid_cols),
+               names_to  = "lipid",
+               values_to = "abundance") %>%
+  left_join(lipid_info, by = "lipid") #%>%
+ # left_join(metadata,   by = "sample_id")
+
+# ---- Create group|day label for ordering & facetting -----------------------
+long_df <- long_df %>%
+  mutate(
+    group_day = case_when(
+      sampleGroup == "SR" ~ "SR",
+      TRUE          ~ paste0(sampleGroup, " | ", sampleDay)
+    ),
+    group_day = factor(group_day, levels = group_day_levels)
+  ) %>%
+  arrange(group_day, sample_id) %>%
+  mutate(sample_id = factor(sample_id, levels = unique(sample_id)))
+
+# ---- Per-lipid summary stats -----------------------------------------------
+lipid_stats <- long_df %>%
+  group_by(lipid) %>%
+  summarise(
+    mean_val = mean(abundance, na.rm = TRUE),
+    sd_val   = sd(abundance, na.rm = TRUE),
+    .groups  = "drop"
+  ) %>%
+  mutate(
+    rsd      = (sd_val / mean_val) * 100,
+    rsd15_lo = mean_val * 0.85,
+    rsd15_hi = mean_val * 1.15,
+    rsd30_lo = mean_val * 0.70,
+    rsd30_hi = mean_val * 1.30
+  )
+
+# ---- Plotting --------------------------------------------------------------
+lipid_order <- lipid_info$lipid
+n_samples   <- n_distinct(long_df$sample_id)
+page_width  <- max(10, n_samples * 0.45 + 3)
+page_height <- 5.5
+
+cat(sprintf("Writing %s  (%d lipids) ...\n", out_file, length(lipid_order)))
+
+pdf(out_file, width = page_width, height = page_height)
+
+for (lip in lipid_order) {
+  
+  stats <- lipid_stats %>% filter(lipid == lip)
+  info  <- lipid_info  %>% filter(lipid == lip)
+  
+  plot_df <- long_df %>% filter(lipid == lip)
+  
+  # vertical separator positions between group_day blocks
+  block_counts <- plot_df %>%
+    group_by(group_day) %>%
+    summarise(n = n(), .groups = "drop") %>%
+    mutate(cum_n = cumsum(n))
+  sep_positions <- head(block_counts$cum_n, -1) + 0.5
+  
+  p <- ggplot(plot_df, aes(x = sample_id, y = abundance, fill = sampleGroup)) +
+    geom_col(width = 0.7) +
+    # reference lines
+    geom_hline(yintercept = stats$mean_val,
+               colour = "red", linewidth = 0.6) +
+    geom_hline(yintercept = c(stats$rsd15_lo, stats$rsd15_hi),
+               colour = "red", linetype = "dotted", linewidth = 0.5) +
+    geom_hline(yintercept = c(stats$rsd30_lo, stats$rsd30_hi),
+               colour = "red", linetype = "dashed", linewidth = 0.5) +
+    # vertical separators between group/day blocks
+    geom_vline(xintercept = sep_positions,
+               colour = "grey50", linetype = "solid", linewidth = 0.3) +
+    scale_fill_manual(values = group_colours, name = "Group") +
+    labs(
+      title    = lip,
+      subtitle = paste0(
+        "Mode: ", toupper(info$mode),
+        "   Class: ", info$lipid_class,
+        "   Mean: ", signif(stats$mean_val, 4),
+        "   %RSD: ", round(stats$rsd, 1), "%"
+      ),
+      x = NULL,
+      y = "Abundance"
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      axis.text.x  = element_text(angle = 45, hjust = 1, size = 6),
+      plot.title    = element_text(face = "bold", size = 12),
+      plot.subtitle = element_text(colour = "grey40", size = 9),
+      legend.position = "top"
+    )
+  
+  print(p)
+}
+
+dev.off()
+
+cat("\nDone –", length(lipid_order), "plots saved to:", normalizePath(out_file), "\n")

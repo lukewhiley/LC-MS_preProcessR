@@ -1,4 +1,6 @@
-file.path = "C:\\Users\\300828F\\Murdoch University\\Luke Whiley - HDR students - Manthan - Manthan\\data\\"
+file.path = "PATH_HERE to the two checkpoint files"
+
+file.path = "C:/Users/300828F/Murdoch University/Luke Whiley - HDR students - Manthan - Manthan/testing/LCMS-preProcesser/"
 
 rda.list <- list.files(
   path =file.path,
@@ -6,7 +8,7 @@ rda.list <- list.files(
   full.names = TRUE
 )
 
-load(rda.list[1])
+load(rda.list[2])
 
 #create new object
 master_list$data$peakArea <- list()
@@ -61,7 +63,7 @@ for(idx in rda.list[2:length(rda.list)]){
 }
 
 
-#remove duplcated sammples
+#remove duplcated samples
 masterListAll$data$peakArea$Long <- masterListAll$data$peakArea$Long[-intersect(which(masterListAll$data$peakArea$Long$samplePlate == "p045a"), grep("p044", masterListAll$data$peakArea$Long$sampleID)),]
 
 

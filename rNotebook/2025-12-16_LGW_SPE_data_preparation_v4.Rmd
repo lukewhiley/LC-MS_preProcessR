@@ -1306,6 +1306,7 @@ for(idx_plate in master_list$project_details$plateList){
     x = master_list$data$peakRegionFinal %>% bind_rows() %>% select(sample_plate, metabolite, peakStartRT, peakEndRT) %>% arrange(metabolite, sample_plate),
     file = paste0(master_list$project_details$project_dir, "/", master_list$project_details$wash, "/plots/peakReview/", Sys.Date(), "_", master_list$project_details$project_name, "_z_peakReviewTemplate.csv")
   )
+   
 
 ```
 
@@ -2019,7 +2020,7 @@ master_list$data$peakArea$Long$sampleType[grep("blank", master_list$data$peakAre
 
 ### create mising values
 #(because some transitions have noise a missing value can be recorded as non-missing)
-master_list$data$peakArea$Long$peakAreaMetabolite[which(master_list$data$peakArea$Long$peakAreaMetabolite<250000)] <- NA
+master_list$data$peakArea$Long$peakAreaMetabolite[which(master_list$data$peakArea$Long$peakAreaMetabolite<150000)] <- NA
 
 
 #make a wide version

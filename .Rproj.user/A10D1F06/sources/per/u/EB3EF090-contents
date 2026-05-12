@@ -1,0 +1,171 @@
+library(tidyverse)
+library(patchwork)
+
+# ============================================================
+# 1. Setup
+# ============================================================
+
+univariateData <- univariateData %>%
+  mutate(
+    sampleGroup = factor(sampleGroup, levels = c("control", "VDRC_101700", "VDRC_100472")),
+    sampleDay = factor(sampleDay, levels = c("5", "10"))
+  )
+
+metaCols <- c("sampleGroup", "sampleDay")
+lipidCols <- names(univariateData %>% select(!contains("sample")))
+
+# ============================================================
+# 2. Extract lipid class from column names
+#    e.g. "pos lpe(18:2/0:0)" -> "LPE"
+#    e.g. "neg pi(16:0/16:1)" -> "PI"
+# ============================================================
+
+extract_class <- function(lipid_name) {
+  # remove pos/neg prefix, then extract the text before the first "("
+  cleaned <- str_remove(lipid_name, "^(pos|neg)\\s+")
+  # handle cases like "octadecatrienoic acid fa(18:3)" -> take word before "("
+  # and cases like "stearoylcarnitine car(18:0)" -> take abbreviation in front of "("
+  class_name <- str_extract(cleaned, "^[^(]+") %>% str_trim()
+  # if there's a space, take the last word (e.g. "lauric acid fa" -> "fa")
+  # but better to extract the abbreviated part just before "("
+  abbrev <- str_extract(cleaned, "\\w+(?=\\()")
+  if(!is.na(abbrev)) return(toupper(abbrev))
+  # fallback: use everything before "("
+  return(toupper(class_name))
+}
+
+lipid_classes <- tibble(
+  lipid = lipidCols,
+  class = map_chr(lipidCols, extract_class)
+)
+
+cat("Lipid classes found:\n")
+print(table(lipid_classes$class))
+
+# ============================================================
+# 3. Grab p-values from your existing anova_wide results
+#    (interaction, group, day)
+# ============================================================
+
+# If anova_wide doesn't exist yet, this will still work — just won't show p-values
+get_pvals <- function(lipid_name) {
+  if(exists("anova_wide")) {
+    row <- anova_wide %>% filter(lipid == lipid_name)
+    if(nrow(row) == 1) {
+      return(list(
+        p_group = row$pAdj_Group,
+        p_day = row$pAdj_Day,
+        p_interaction = row$pAdj_Interaction
+      ))
+    }
+  }
+  list(p_group = NA, p_day = NA, p_interaction = NA)
+}
+
+# ============================================================
+# 4. Combined plot function: bars + trajectory lines
+# ============================================================
+
+plot_combined <- function(lipid_name) {
+  
+  pvals <- get_pvals(lipid_name)
+  
+  df <- univariateData %>%
+    select(sampleGroup, sampleDay, value = all_of(lipid_name))
+  
+  df_summary <- df %>%
+    group_by(sampleGroup, sampleDay) %>%
+    summarise(
+      mean = mean(value, na.rm = TRUE),
+      sd = sd(value, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  # x positions for bars: day as major grouping, group within day
+  df_summary <- df_summary %>%
+    mutate(
+      day_num = as.numeric(sampleDay),
+      group_num = as.numeric(sampleGroup),
+      # spread groups within each day
+      x_pos = day_num + (group_num - 2) * 0.25
+    )
+  
+  # match individual points to same x positions
+  df_points <- df %>%
+    left_join(df_summary %>% select(sampleGroup, sampleDay, x_pos), 
+              by = c("sampleGroup", "sampleDay"))
+  
+  # trajectory line data (connect same group across days)
+  df_lines <- df_summary %>%
+    select(sampleGroup, sampleDay, x_pos, mean)
+  
+  # subtitle with p-values
+  subtitle_text <- paste0(
+    "Group p.adj=", signif(pvals$p_group, 3),
+    " | Day p.adj=", signif(pvals$p_day, 3),
+    " | Interaction p.adj=", signif(pvals$p_interaction, 3)
+  )
+  
+  ggplot(df_summary, aes(x = x_pos, y = mean, fill = sampleGroup)) +
+    # bars
+    geom_col(width = 0.2, colour = "black", linewidth = 0.3) +
+    # error bars
+    geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), width = 0.08, linewidth = 0.4) +
+    # individual points
+    geom_jitter(data = df_points, aes(x = x_pos, y = value),
+                width = 0.03, size = 1.5, shape = 21, fill = "white", alpha = 0.7) +
+    # trajectory lines connecting groups across days
+    geom_line(data = df_lines, aes(x = x_pos, y = mean, group = sampleGroup, colour = sampleGroup),
+              linewidth = 0.8, linetype = "dashed") +
+    geom_point(aes(colour = sampleGroup), size = 2.5, shape = 16) +
+    # scales
+    scale_fill_manual(values = c("control" = "grey80", "VDRC_101700" = "lightblue", "VDRC_100472" = "darkblue")) +
+    scale_colour_manual(values = c("control" = "grey40", "VDRC_101700" = "steelblue", "VDRC_100472" = "navy")) +
+    scale_x_continuous(
+      breaks = c(1, 2),
+      labels = c("Day 5", "Day 10"),
+      limits = c(0.5, 2.5)
+    ) +
+    labs(
+      title = lipid_name,
+      subtitle = subtitle_text,
+      x = NULL, y = "Concentration",
+      fill = "Group", colour = "Group"
+    ) +
+    theme_bw(base_size = 10) +
+    theme(
+      legend.position = "bottom",
+      plot.title = element_text(size = 9, face = "bold"),
+      plot.subtitle = element_text(size = 7)
+    )
+}
+
+# ============================================================
+# 5. Generate one PDF per lipid class
+# ============================================================
+
+classes <- unique(lipid_classes$class)
+
+for(cls in classes) {
+  
+  cls_lipids <- lipid_classes %>% filter(class == cls) %>% pull(lipid)
+  
+  if(length(cls_lipids) == 0) next
+  
+  # generate plots for all lipids in this class
+  plots <- map(cls_lipids, plot_combined)
+  
+  # determine layout
+  ncols <- min(4, length(plots))
+  nrows <- ceiling(length(plots) / ncols)
+  
+  combined <- wrap_plots(plots, ncol = ncols)
+  
+  fname <- paste0("plots_class_", cls, ".pdf")
+  ggsave(fname, combined,
+         width = 5.5 * ncols,
+         height = 4.5 * nrows,
+         limitsize = FALSE)
+  
+  cat("Saved:", fname, "(", length(cls_lipids), "lipids )\n")
+}

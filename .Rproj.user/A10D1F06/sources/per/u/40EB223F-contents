@@ -1,0 +1,272 @@
+library(tidyverse)
+library(broom)
+library(patchwork)
+
+# ============================================================
+# 1. Setup
+# ============================================================
+
+univariateData <- univariateData %>%
+  mutate(
+    sampleGroup = factor(sampleGroup, levels = c("control", "VDRC_101700", "VDRC_100472")),
+    sampleDay = factor(sampleDay, levels = c("5", "10"))
+  )
+
+metaCols <- c("sampleGroup", "sampleDay")
+lipidCols <- names(univariateData %>% select(!contains("sample")))
+
+# ============================================================
+# 2. Group comparisons at each time point separately
+# ============================================================
+
+timepoint_results <- map_dfr(c("5", "10"), function(day) {
+  
+  dayData <- univariateData %>% filter(sampleDay == day)
+  
+  map_dfr(lipidCols, function(lipid) {
+    
+    df <- dayData %>% select(sampleGroup, value = all_of(lipid))
+    
+    # one-way ANOVA: control vs VDRC_101700 vs VDRC_100472
+    anova_p <- tryCatch({
+      summary(aov(value ~ sampleGroup, data = df))[[1]]$`Pr(>F)`[1]
+    }, error = function(e) NA)
+    
+    # pairwise: control vs each VDRC line
+    ctrl_vs_101700 <- tryCatch({
+      t.test(
+        df %>% filter(sampleGroup == "control") %>% pull(value),
+        df %>% filter(sampleGroup == "VDRC_101700") %>% pull(value)
+      )$p.value
+    }, error = function(e) NA)
+    
+    ctrl_vs_100472 <- tryCatch({
+      t.test(
+        df %>% filter(sampleGroup == "control") %>% pull(value),
+        df %>% filter(sampleGroup == "VDRC_100472") %>% pull(value)
+      )$p.value
+    }, error = function(e) NA)
+    
+    tibble(
+      lipid = lipid,
+      day = day,
+      p_anova = anova_p,
+      p_ctrl_vs_101700 = ctrl_vs_101700,
+      p_ctrl_vs_100472 = ctrl_vs_100472
+    )
+  })
+})
+
+# FDR correction within each day
+timepoint_results <- timepoint_results %>%
+  group_by(day) %>%
+  mutate(
+    pAdj_anova = p.adjust(p_anova, method = "BH"),
+    pAdj_ctrl_vs_101700 = p.adjust(p_ctrl_vs_101700, method = "BH"),
+    pAdj_ctrl_vs_100472 = p.adjust(p_ctrl_vs_100472, method = "BH")
+  ) %>%
+  ungroup()
+
+# split by day for easy access
+results_d5 <- timepoint_results %>% filter(day == "5") %>% arrange(pAdj_anova)
+results_d10 <- timepoint_results %>% filter(day == "10") %>% arrange(pAdj_anova)
+
+cat("--- Day 5 group differences (FDR < 0.05) ---\n")
+cat("ANOVA:             ", sum(results_d5$pAdj_anova < 0.05, na.rm = TRUE), "\n")
+cat("Ctrl vs 101700:    ", sum(results_d5$pAdj_ctrl_vs_101700 < 0.05, na.rm = TRUE), "\n")
+cat("Ctrl vs 100472:    ", sum(results_d5$pAdj_ctrl_vs_100472 < 0.05, na.rm = TRUE), "\n")
+
+cat("\n--- Day 10 group differences (FDR < 0.05) ---\n")
+cat("ANOVA:             ", sum(results_d10$pAdj_anova < 0.05, na.rm = TRUE), "\n")
+cat("Ctrl vs 101700:    ", sum(results_d10$pAdj_ctrl_vs_101700 < 0.05, na.rm = TRUE), "\n")
+cat("Ctrl vs 100472:    ", sum(results_d10$pAdj_ctrl_vs_100472 < 0.05, na.rm = TRUE), "\n")
+
+# ============================================================
+# 3. Time effect within each group
+# ============================================================
+
+time_results <- map_dfr(c("control", "VDRC_101700", "VDRC_100472"), function(grp) {
+  
+  grpData <- univariateData %>% filter(sampleGroup == grp)
+  
+  map_dfr(lipidCols, function(lipid) {
+    
+    df <- grpData %>% select(sampleDay, value = all_of(lipid))
+    
+    time_p <- tryCatch({
+      t.test(value ~ sampleDay, data = df)$p.value
+    }, error = function(e) NA)
+    
+    # fold change: day10 / day5
+    mean_d5 <- mean(df %>% filter(sampleDay == "5") %>% pull(value), na.rm = TRUE)
+    mean_d10 <- mean(df %>% filter(sampleDay == "10") %>% pull(value), na.rm = TRUE)
+    
+    tibble(
+      lipid = lipid,
+      group = grp,
+      p_time = time_p,
+      mean_d5 = mean_d5,
+      mean_d10 = mean_d10,
+      fc_d10_vs_d5 = mean_d10 / mean_d5,
+      log2fc = log2(mean_d10 / mean_d5)
+    )
+  })
+})
+
+time_results <- time_results %>%
+  group_by(group) %>%
+  mutate(pAdj_time = p.adjust(p_time, method = "BH")) %>%
+  ungroup()
+
+cat("\n--- Time effects (FDR < 0.05) ---\n")
+for(grp in c("control", "VDRC_101700", "VDRC_100472")) {
+  n_sig <- sum(time_results %>% filter(group == grp) %>% pull(pAdj_time) < 0.05, na.rm = TRUE)
+  cat(grp, ": ", n_sig, "\n")
+}
+
+# ============================================================
+# 4. Plot functions
+# ============================================================
+
+# Bar plot for single time point group comparisons
+plot_group_bar <- function(lipid_name, day_val, pval_anova) {
+  
+  df <- univariateData %>%
+    filter(sampleDay == day_val) %>%
+    select(sampleGroup, value = all_of(lipid_name))
+  
+  df_summary <- df %>%
+    group_by(sampleGroup) %>%
+    summarise(mean = mean(value, na.rm = TRUE), sd = sd(value, na.rm = TRUE), .groups = "drop")
+  
+  ggplot(df_summary, aes(x = sampleGroup, y = mean, fill = sampleGroup)) +
+    geom_col(width = 0.6, colour = "black", linewidth = 0.3) +
+    geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), width = 0.2) +
+    geom_jitter(data = df, aes(x = sampleGroup, y = value), 
+                width = 0.1, size = 2, shape = 21, fill = "white", alpha = 0.7) +
+    scale_fill_manual(values = c("control" = "grey80", "VDRC_101700" = "lightblue", "VDRC_100472" = "darkblue")) +
+    labs(
+      title = lipid_name,
+      subtitle = paste0("Day ", day_val, " | ANOVA p.adj = ", signif(pval_anova, 3)),
+      x = NULL, y = "Concentration"
+    ) +
+    theme_bw(base_size = 10) +
+    theme(legend.position = "none", axis.text.x = element_text(angle = 30, hjust = 1))
+}
+
+# Line plot for time effect within a group
+plot_time_line <- function(lipid_name, grp, pval_time) {
+  
+  df <- univariateData %>%
+    filter(sampleGroup == grp) %>%
+    select(sampleDay, value = all_of(lipid_name)) %>%
+    mutate(sampleDay = as.numeric(as.character(sampleDay)))
+  
+  df_summary <- df %>%
+    group_by(sampleDay) %>%
+    summarise(mean = mean(value, na.rm = TRUE), sd = sd(value, na.rm = TRUE), .groups = "drop")
+  
+  ggplot(df_summary, aes(x = sampleDay, y = mean)) +
+    geom_line(linewidth = 0.8, colour = "grey30") +
+    geom_point(size = 3, shape = 21, fill = "steelblue", stroke = 0.8) +
+    geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), width = 0.3) +
+    geom_jitter(data = df, aes(y = value), width = 0.15, size = 1.5, alpha = 0.5) +
+    scale_x_continuous(breaks = c(5, 10)) +
+    labs(
+      title = paste0(lipid_name, " — ", grp),
+      subtitle = paste0("Time p.adj = ", signif(pval_time, 3)),
+      x = "Day", y = "Concentration"
+    ) +
+    theme_bw(base_size = 10)
+}
+
+# Interaction line plot (same as before)
+plot_interaction <- function(lipid_name, pval_interaction) {
+  
+  df <- univariateData %>%
+    select(sampleGroup, sampleDay, value = all_of(lipid_name))
+  
+  df_summary <- df %>%
+    group_by(sampleGroup, sampleDay) %>%
+    summarise(mean = mean(value, na.rm = TRUE), sd = sd(value, na.rm = TRUE), .groups = "drop") %>%
+    mutate(sampleDay = as.numeric(as.character(sampleDay)))
+  
+  ggplot(df_summary, aes(x = sampleDay, y = mean, colour = sampleGroup, fill = sampleGroup)) +
+    geom_line(linewidth = 0.8) +
+    geom_point(size = 3, shape = 21, stroke = 0.8) +
+    geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), width = 0.3, linewidth = 0.5) +
+    geom_jitter(data = df %>% mutate(sampleDay = as.numeric(as.character(sampleDay))),
+                aes(y = value), shape = 21, size = 1.5, width = 0.15, alpha = 0.5) +
+    scale_colour_manual(values = c("control" = "grey40", "VDRC_101700" = "steelblue", "VDRC_100472" = "navy")) +
+    scale_fill_manual(values = c("control" = "grey80", "VDRC_101700" = "lightblue", "VDRC_100472" = "darkblue")) +
+    scale_x_continuous(breaks = c(5, 10)) +
+    labs(title = lipid_name,
+         subtitle = paste0("Interaction p.adj = ", signif(pval_interaction, 3)),
+         x = "Day", y = "Concentration", colour = "Group", fill = "Group") +
+    theme_bw(base_size = 10) +
+    theme(legend.position = "bottom")
+}
+
+# ============================================================
+# 5. Generate PDFs
+# ============================================================
+
+n_top <- 30  # max lipids per PDF — adjust as needed
+
+# --- PDF 1: Interaction hits ---
+top_interaction <- anova_wide %>%
+  filter(pAdj_Interaction < 0.05) %>%
+  slice_min(pAdj_Interaction, n = n_top)
+
+if(nrow(top_interaction) > 0) {
+  plots <- map2(top_interaction$lipid, top_interaction$pAdj_Interaction, plot_interaction)
+  combined <- wrap_plots(plots, ncol = 4)
+  ggsave("plots_interaction_hits.pdf", combined,
+         width = 22, height = 5 * ceiling(length(plots) / 4), limitsize = FALSE)
+  cat("Saved: plots_interaction_hits.pdf\n")
+}
+
+# --- PDF 2: Day 5 group differences ---
+top_d5 <- results_d5 %>%
+  filter(pAdj_anova < 0.05) %>%
+  slice_min(pAdj_anova, n = n_top)
+
+if(nrow(top_d5) > 0) {
+  plots <- map2(top_d5$lipid, top_d5$pAdj_anova, ~plot_group_bar(.x, "5", .y))
+  combined <- wrap_plots(plots, ncol = 4)
+  ggsave("plots_group_day5.pdf", combined,
+         width = 22, height = 5 * ceiling(length(plots) / 4), limitsize = FALSE)
+  cat("Saved: plots_group_day5.pdf\n")
+}
+
+# --- PDF 3: Day 10 group differences ---
+top_d10 <- results_d10 %>%
+  filter(pAdj_anova < 0.05) %>%
+  slice_min(pAdj_anova, n = n_top)
+
+if(nrow(top_d10) > 0) {
+  plots <- map2(top_d10$lipid, top_d10$pAdj_anova, ~plot_group_bar(.x, "10", .y))
+  combined <- wrap_plots(plots, ncol = 4)
+  ggsave("plots_group_day10.pdf", combined,
+         width = 22, height = 5 * ceiling(length(plots) / 4), limitsize = FALSE)
+  cat("Saved: plots_group_day10.pdf\n")
+}
+
+# --- PDF 4: Time effects per group ---
+for(grp in c("control", "VDRC_101700", "VDRC_100472")) {
+  
+  top_time <- time_results %>%
+    filter(group == grp, pAdj_time < 0.05) %>%
+    slice_min(pAdj_time, n = n_top)
+  
+  if(nrow(top_time) > 0) {
+    plots <- map2(top_time$lipid, top_time$pAdj_time, ~plot_time_line(.x, grp, .y))
+    combined <- wrap_plots(plots, ncol = 4)
+    fname <- paste0("plots_time_", gsub(" ", "_", grp), ".pdf")
+    ggsave(fname, combined,
+           width = 22, height = 5 * ceiling(length(plots) / 4), limitsize = FALSE)
+    cat("Saved:", fname, "\n")
+  } else {
+    cat("No significant time effects for", grp, "\n")
+  }
+}

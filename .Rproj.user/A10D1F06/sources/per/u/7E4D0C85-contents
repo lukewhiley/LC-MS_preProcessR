@@ -1,5 +1,0 @@
-master_list$project_details$plateDirList <- gsub(
-  "D:/LENOVO Local Disk E/Local Disk/Rstudio files/HIMS CCC/20251023_HIMS_V4/N/data/mzml/",
-  "C:/Users/300828F/Murdoch University/Luke Whiley - HDR students - Manthan - Manthan/HIMS/N/data/mzml/",
-  master_list$project_details$plateDirList
-)
